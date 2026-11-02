@@ -1,0 +1,7 @@
+dist-newstyle/
+*.o
+*.hi
+*.tso
+*.event
+haskdb.lock
+*.tmp
