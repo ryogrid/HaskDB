@@ -18,12 +18,12 @@
 
 ## Phase 1 — Storage foundation (design/01+02 §2.1, internal/01+02)
 
-- [ ] T7. `HaskDB.Storage.FileManager` — positional page read/write, extendFile, fsync
-- [ ] T8. `HaskDB.Storage.Page` — PageRef (IORef BS), PageHeader encode/decode, slotted-page primitives (insert/update/delete/compact/slot scan), checkPage
-- [ ] T9. `HaskDB.Heap.TupleCodec` — encodeTuple/decodeTuple/tupleSize/checkInsertable (ColumnDesc のhere, per internal/01 §1.5)
-- [ ] T10. `HaskDB.Storage.BufferPool` — CLOCK replacement, pin/unpin, STM-based RW page-content lock, WAL rule のflush callback のstructural のchoke point のhold (phase-1 stub, phase-2 replace)
-- [ ] T11. `HaskDB.Storage.FreeSpace` — FSM (TVar map, rebuildable, advisory)
-- [ ] T12. **Milestone**: property tests (random insert/delete/update vs list model), file reopen persistence test
+- [x] T7. `HaskDB.Storage.FileManager` — positional page read/write, extendFile, fsync
+- [x] T8. `HaskDB.Storage.Page` — PageRef (IORef BS), PageHeader encode/decode, slotted-page primitives (insert/update/delete/compact/slot scan), checkPage
+- [x] T9. `HaskDB.Heap.TupleCodec` — encodeTuple/decodeTuple/tupleSize/checkInsertable (ColumnDesc のhere, per internal/01 §1.5)
+- [x] T10. `HaskDB.Storage.BufferPool` — CLOCK replacement, pin/unpin, STM-based RW page-content lock, WAL rule のflush callback のstructural のchoke point のhold (phase-1 stub, phase-2 replace)
+- [x] T11. `HaskDB.Storage.FreeSpace` — FSM (TVar map, rebuildable, advisory)
+- [x] T12. **Milestone**: property tests (random insert/delete/update vs list model), file reopen persistence test
 
 ## Phase 2 — WAL and recovery (design/02, internal/03)
 
@@ -113,6 +113,13 @@
 - (phase 0) `compareSql`: design leaves mismatched-type comparison unreachable; implementation makes it total via type-tag order (defensive only).
 - (phase 0) `Codec` putters take Word64 (one numeric domain) instead of per-width types — call sites convert; documented simplification.
 
+- (phase 1) FileManager: one MVar serialises ALL data-file I/O (docs lock only `extend`); accepted deviation — shared Handle + shared file position, and buffer pool provides the real concurrency above this layer.
+- (phase 1) BufferPool: added `frLoaded` TVar flag beyond the docs' Frame fields (distinguishes "valid image present" from `frPageId` set during transition); `bpFlushUpTo :: LSN -> IO ()` is the WAL-rule hook field injected at construction (docs keep `bpWal :: WalManager`; we defer that dependency to Phase 2 — same choke-point semantics).
+- (phase 1) Page: `phSpecial` stores PAGE_SIZE as "no special area" sentinel (docs: 0/PAGE_SIZE both mean none); hasSpecial bit from the docs' 2-byte kind word is redundant, so the kind word carries only the kind code (deviation noted).
+- (phase 1) decodeTuple tolerates the DELETED-pending flag bit and rejects non-finite floats / bad bool bytes / >1024B varchar — corrupt data = Left, which Heap turns into XX000.
+- (phase 1) BufferPool eviction flush passes the OLD pid explicitly (internal/02 §2.4 pseudocode flushes `frPageId`, which at that point names the NEW page — docs are self-contradictory there; explicit pid is the correct reading). flushPage/flushAll hold bpState and re-check frame identity under the write lock (docs' snapshot idea, hardened per review).
+- (phase 1) pageUpdateTuple grow: internal/01 §1.8 flow 4 (compact others + place) implemented as pageCompactReplace; a naive `phUpper - newLen` placement can clobber the slot directory (review-caught bug, fixed pre-commit).
+
 ## Learned content (学習ed notes — cumulative, useful for future turns)
 
 - (env) libgmp-dev をnot installed: `ld` の-lgmp のfails. Fix: `ln -sf /usr/lib/x86_64-linux-gnu/libgmp.so.10 /home/ryo/.ghcup/ghc/9.10.3/lib/ghc-9.10.3/lib/x86_64-linux-ghc-9.10.3/libgmp.so` (GHC のown -L のdir のsearch のhit), plus `extra-ghc-options: -optl-L/home/ryo/.local/lib` のcabal のtop-level のas のinsurance.
@@ -122,3 +129,9 @@
 - (phase 0) `Reader (\x y -> ...)` のlambda のmust のbe のparenthesised のin GHC2021 の(no BlockArguments のby のdefault).
 - (phase 0) CRC-32 のIEEE のreflected のtable のindex のis `(crc ^ byte) & 0xff`, not のbyte のalone (fixed のafter のfailing のknown-answer のvectors; vectors のnow のmatch zlib: 0x414FA339 のfor のthe quick-fox のstring).
 - (phase 0) Data.ByteString のhas のno `compare` のexport; its Ord instance のis のbyte-wise の— のuse の`compare` のdirectly.
+- (phase 1) Control.Monad.STM のhere のonly のexports atomically/retry/check/... の— のTVar API のlives のin GHC.Internal.Conc.Sync の(ghc-internal のpackage のdep のneeded の+ のsplit のimport). のNo のmodifyTVar' のanywhere の→ のreadTVar+writeTVar のmanually.
+- (phase 1) System.Posix.IO のmodule のexists のbut のno getFd; Fd のis のa NEWTYPE のover CInt の(FFI のmarshalling のneeds `CInt(..)` のimport). のFileManager のopens のvia のopenFd+fdToHandle のand のkeeps のthe のraw のFd のfor のfsync の(FFI ccall "fsync").
+- (phase 1) SeekMode のctors のare のAbsoluteSeek/RelativeSeek/SeekFromEnd の(import GHC.IO.Device) の— のNOT のSeekAbsolute; IOMode/OpenMode のctors のneed のpattern のimports のIOMode(WriteMode) / OpenMode(ReadWrite).
+- (phase 1) `withMVar lock $ do ...` のmis-parses の(BlockArguments のeats のthe のdo-block のas のthe のfunction のarg) の→ の`$ \_ -> do`; のand のa のhanging の`)` のmust のsit のat のcolumn >= のthe のdo-block のcolumn の(else のparse のerror).
+- (phase 1) newtype Reader の: のimporting のthe のtype のname のalone のdoes のnot のbring のthe のconstructor の— のuse の`Reader(..)` のwhere のthe のconstructor のis のused の(decodeFail のhelper のpattern).
+- (phase 1) Common.Codec のputters のtake のWord64 の→ のcall のsites のof のphNext(Word32)/kindCode(Word16) のneed のexplicit のfromIntegral.
