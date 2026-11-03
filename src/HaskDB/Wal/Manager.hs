@@ -27,7 +27,7 @@ import Foreign.C.Types (CInt(..))
 import Foreign.C.String (CString, withCString)
 import HaskDB.Common.Types
 import HaskDB.Common.Error (throwSql)
-import HaskDB.Wal.Format (WalRecord, encodeRecord)
+import HaskDB.Wal.Format (WalRecord, encodeRecord, decodeRecord)
 
 -- fdatasync via libc FFI (D-06 rationale: no extra package; internal/03
 -- §3.3 prefers fileSynchronizeDataOnly — fdatasync is the same call).
@@ -149,11 +149,24 @@ nextLSN wm = withMVar (wmState wm) $ \st -> pure (wsNextLSN st)
 -- | Read ALL current WAL bytes (including a garbage tail) through the
 --   manager's own handle — opening a second (GHC-level) handle on the
 --   same file would flock-collide with the manager's unix flock.
---   O_APPEND keeps later appends at the logical end despite this seek.
+--   Appends the not-yet-written buffer so the result is the logical
+--   WAL prefix up to wsNextLSN (buffer-aware, internal/03 §3.6 read
+--   needs).  O_APPEND keeps later appends at the logical end despite
+--   this seek.
 readWalAll :: WalManager -> IO BS.ByteString
-readWalAll wm = do
+readWalAll wm = withMVar (wmState wm) $ \st -> do
   let h = wmHandle wm
   sz <- fileSize <$> getFileStatus (wmPath wm)
   hSeek h AbsoluteSeek 0
-  bs <- BS.hGet h (fromIntegral sz)
-  pure bs
+  fileBs <- BS.hGet h (fromIntegral sz)
+  pure (fileBs <> wsBuffer st)
+
+-- | Decode the record at an LSN (live rollback, internal/04 §4.2:
+--   "read WAL record at lsn ... consults buffer state under the MVar
+--   before falling back to the file" — readWalAll is exactly that).
+readRecordAt :: WalManager -> LSN -> IO WalRecord
+readRecordAt wm lsn = do
+  bs <- readWalAll wm
+  case decodeRecord bs (fromIntegral lsn) of
+    Left e         -> throwSql "XX000" ("wal: record at lsn unreadable: " <> e)
+    Right (rec, _) -> pure rec

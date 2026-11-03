@@ -22,7 +22,7 @@ import Control.Monad.STM (atomically)
 import System.Directory (doesFileExist, createDirectoryIfMissing)
 import System.FilePath ((</>))
 import Control.Concurrent.MVar (withMVar)
-import GHC.Internal.Conc.Sync (readTVarIO, writeTVar)
+import GHC.Internal.Conc.Sync (writeTVar)
 import HaskDB.Common.Types
 import HaskDB.Common.Config
 import HaskDB.Common.Error (throwSql)
@@ -32,7 +32,7 @@ import HaskDB.Storage.FileManager
 import HaskDB.Storage.BufferPool
 import HaskDB.Wal.Manager
 import HaskDB.Wal.Format
-import HaskDB.Storage.Page
+import HaskDB.Wal.Apply (applyRedo, applyUndo, touchesPage)
 
 -- Database file names (impl choice: the docs never name them).
 dataFileName, walFileName, controlFileName :: String
@@ -59,24 +59,6 @@ scanEnd :: BS.ByteString -> Int -> Int
 scanEnd bs off = case decodeRecord bs off of
   Left _ -> off
   Right (_, off') -> scanEnd bs off'
-
--- | Payloads whose redo/undo is page-level; index-logical and catalog
---   payloads map to "no page" (internal/03 §3.6 Phase A note; catalog
---   note is a Phase-4 extension).
-touchesPage :: WalPayload -> Maybe PageId
-touchesPage p = case p of
-  PInsertTuple pg _ _ -> Just pg
-  PDeleteTuple pg _ _   -> Just pg
-  PUpdateTuple pg _ _ _ -> Just pg
-  PPageImage pg _       -> Just pg
-  PAllocPage pg _       -> Just pg
-  PIndexInsert{} -> Nothing
-  PIndexDelete{} -> Nothing
-  PCreateTable{} -> Nothing
-  PCreateIndex{} -> Nothing
-  PCommit  -> Nothing
-  PAbort   -> Nothing
-  PCheckpoint{} -> Nothing
 
 -- | Phase A: transaction table + first-dirty-page map from checkpoint.
 analyze :: BS.ByteString -> LSN
@@ -117,102 +99,25 @@ fixLast wb _cp t info
                           , wrTxn r == t ]) }
   | otherwise = info
 
--- | Redo a physiological change (guarded by on-page phLsn and content,
---   internal/03 §3.4 + §3.7 table).
-applyRedo :: Env -> WalRecord -> LSN -> IO ()
-applyRedo env rec lsn = case wrPayload rec of
-  PInsertTuple pg n tb -> withPageDirty bp pg $ \pr -> do
-    hdr <- readHeader pr
-    when (phLsn hdr < lsn) $ pageSetTuple pr lsn n tb
-  PDeleteTuple pg n bf -> withPageDirty bp pg $ \pr -> do
-    hdr <- readHeader pr
-    when (phLsn hdr < lsn) $ do
-      ms <- readSlot pr n
-      case ms of
-        Just (off, len) -> do
-          cur <- pageSlice pr off len
-          when (cur == bf) $ pageDeleteTuple pr lsn n
-        Nothing -> pure ()
-  PUpdateTuple pg n bf af -> withPageDirty bp pg $ \pr -> do
-    hdr <- readHeader pr
-    when (phLsn hdr < lsn) $ do
-      ms <- readSlot pr n
-      sz <- pageFrameLen pr
-      case ms of
-        Just (off, len) -> do
-          cur <- pageSlice pr off len
-          when (cur == bf) $ pageUpdateTuple pr lsn sz n af
-        Nothing -> pure ()
-  PPageImage pg img -> withPageDirty bp pg $ \pr -> do
-    hdr <- readHeader pr
-    when (phLsn hdr < lsn) $ installPageImage pr img lsn
-  PAllocPage pg _ -> do
-    pc <- filePageCount fm
-    when (pc <= pg) (extendUntil fm pg)
-  PIndexInsert{} -> pure ()   -- Phase 5: entry-level redo (stub now)
-  PIndexDelete{} -> pure ()
-  PCreateTable{} -> pure ()   -- Phase 4: catalog rows (stub now)
-  PCreateIndex{} -> pure ()
-  PCommit      -> pure ()
-  PAbort       -> pure ()
-  PCheckpoint{} -> pure ()
-  where
-    bp = envBufferPool env
-    fm = envFileMgr env
-    extendUntil fm' pg = do
-      pc <- filePageCount fm'
-      if pc > pg then pure ()
-        else extendFile fm' >> extendUntil fm' pg
-
--- | Undo: inverse guarded against the current content (§3.7 table);
---   undo NEVER installs page images (internal/03 §3.7 rule).
-applyUndo :: Env -> WalRecord -> LSN -> IO ()
-applyUndo env rec lsn = case wrPayload rec of
-  PInsertTuple pg n tb -> withPageDirty bp pg $ \pr -> do
-    ms <- readSlot pr n
-    case ms of
-      Just (off, len) -> do
-        cur <- pageSlice pr off len
-        when (cur == tb) $ pageDeleteTuple pr lsn n
-      Nothing -> pure ()
-  PDeleteTuple pg n bf -> withPageDirty bp pg $ \pr ->
-    pageSetTuple pr lsn n bf
-  PUpdateTuple pg n bf af -> withPageDirty bp pg $ \pr -> do
-    ms <- readSlot pr n
-    case ms of
-      Just (off, len) -> do
-        cur <- pageSlice pr off len
-        when (cur == af) $ pageSetTuple pr lsn n bf
-      Nothing -> pure ()
-  PPageImage{}  -> pure ()
-  PAllocPage{}  -> pure ()
-  PIndexInsert{} -> pure ()
-  PIndexDelete{} -> pure ()
-  PCreateTable{} -> pure ()
-  PCreateIndex{} -> pure ()
-  PCommit       -> pure ()
-  PAbort        -> pure ()
-  PCheckpoint{} -> pure ()
-  where
-    bp = envBufferPool env
-
--- | §3.5 checkpoint.  Deviation: active-txn snapshot is [] until the
---   Txn.Manager (Phase 3) exists; nextTid is read from the Env.
-runCheckpoint :: Env -> IO ()
-runCheckpoint env = withMVar (envCkptLock env) $ \_ -> do
+-- | §3.5 checkpoint with explicit active-txn snapshot and nextTid
+--   (deviation: docs take only Env — our Env does not carry the Txn
+--   Manager, so the checkpoint core receives (activeTxnsOldestLSN, nextTid)
+--   from its caller; the server/checkpoint-timer thread will call this
+--   with the live TxnManager's data in Phase 7).
+runCheckpointWith :: Env -> [(TxnId, LSN)] -> TxnId -> IO ()
+runCheckpointWith env act tid = withMVar (envCkptLock env) $ \_ -> do
   let wal = envWalMgr env
   lsn <- appendRecord wal WalRecord
     { wrType = WTCheckpoint, wrTxn = 0, wrPrevTxn = 0
-    , wrPayload = PCheckpoint [] }
+    , wrPayload = PCheckpoint act }
   flushWalUpTo wal lsn
   flushAll (envBufferPool env)
   fsyncDataFile (envFileMgr env)
-  tid <- readTVarIO (envNextTid env)
   let ctlNew = ControlFile
         { cfPageSize = cfgPageSize (envConfig env)
         , cfCheckpointLSN = lsn, cfNextTid = tid }
   writeControl (envCtlPath env) ctlNew
-  atomically $ writeTVar (envControl env) ctlNew
+  atomically (writeTVar (envControl env) ctlNew)
 
 -- | §3.6 recovery entry: build raw managers, run the three phases,
 --   write a fresh checkpoint, return the assembled Env.  (Catalog cache
@@ -244,20 +149,23 @@ recoverDatabase cfg = do
 performRecovery :: Env -> ControlFile -> IO ()
 performRecovery env ctl = do
   walBytes <- readWalAll (envWalMgr env)
-  let sz = fromIntegral (BS.length walBytes)
+  let sz = fromIntegral (BS.length walBytes) :: LSN
       cp = cfCheckpointLSN ctl
       walEnd = scanEnd walBytes (fromIntegral cp)
   let (tbl0, dirty) = analyze walBytes cp
       tbl = Map.mapWithKey (fixLast walBytes cp) tbl0
       redoStart = if Map.null dirty then walEnd
                     else fromIntegral (minimum (Map.elems dirty) :: LSN)
-  when (walEnd < fromIntegral sz) $
+  when (walEnd < (fromIntegral sz :: Int)) $
     truncateWal (envWalMgr env) (fromIntegral walEnd)
   flushWalUpTo (envWalMgr env) (fromIntegral walEnd)
   forM_ (scanRecords walBytes (fromIntegral redoStart)) $ \(off, rec) ->
     applyRedo env rec (fromIntegral off)
   mapM_ (undoLoser env walBytes) (Map.toList tbl)
-  runCheckpoint env
+  -- nextTid must not reuse ids seen in the WAL (aborted txns consumed
+  -- ids past the checkpoint): bump past the max txn id analyzed.
+  let tidNew = max (cfNextTid ctl) (1 + maximum (0 : Map.keys tbl))
+  runCheckpointWith env [] tidNew
 
 undoLoser :: Env -> BS.ByteString -> (TxnId, TxnRecoveryInfo) -> IO ()
 undoLoser env wb (_, info)

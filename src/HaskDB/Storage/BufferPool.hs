@@ -331,4 +331,5 @@ pinNewPage :: BufferPool -> PageId -> PageKind -> IO PinnedPage
 pinNewPage bp pid k = do
   pp <- pinWith bp pid True
   initPage (ppPage pp) k (bpPageSize bp)
+  atomically $ writeTVar (frDirty (ppFrame pp)) True  -- fresh image must reach the file
   pure pp

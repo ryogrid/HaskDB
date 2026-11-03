@@ -207,7 +207,7 @@ crashSimTests = do
   let e3 = checkT "page2 untouched" (pg2 == img2) e2
   ctl <- readControl ctlPath
   let e4 = checkT "ctl checkpoint advanced" (cfCheckpointLSN ctl > ck1) e3
-  let e5 = checkT "ctl nextTid preserved" (cfNextTid ctl == 8) e4
+  let e5 = checkT "ctl nextTid bumped past WAL txn ids" (cfNextTid ctl == 10) e4
   walBs <- readWalAll (envWalMgr env)
   let e6 = checkT "garbage tail truncated"
              (scanEnd walBs 0 == fromIntegral (BS.length walBs)) e5

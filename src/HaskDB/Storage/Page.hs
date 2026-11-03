@@ -198,7 +198,7 @@ pageInsertTuple pr lsn bytes = do
       off = phUpper hdr' - need
   pageSplice pr off need bytes
   writeSlot pr slot off need
-  writeHeader pr hdr' { phUpper = off, phLsn = lsn }
+  writeHeader pr hdr' { phUpper = off, phLsn = max (phLsn hdr') lsn }
   pure slot
 
 pageReadTuple :: PageRef -> SlotNum -> IO BS.ByteString
@@ -222,7 +222,7 @@ pageUpdateTuple pr lsn pageSize n newB = do
           pageSplice pr oldOff newLen newB
           writeSlot pr n oldOff newLen
           hdr <- readHeader pr
-          writeHeader pr hdr { phLsn = lsn }
+          writeHeader pr hdr { phLsn = max (phLsn hdr) lsn }
         else do
           hdr <- readHeader pr
           live <- liveSlots pr
@@ -237,7 +237,7 @@ pageUpdateTuple pr lsn pageSize n newB = do
                 let off = phUpper hdr - newLen
                 pageSplice pr off newLen newB
                 writeSlot pr n off newLen
-                writeHeader pr hdr { phUpper = off, phLsn = lsn }
+                writeHeader pr hdr { phUpper = off, phLsn = max (phLsn hdr) lsn }
               else do
                 -- internal/01 §1.8 flow 4: compact the OTHER live tuples
                 -- (excluding slot n's old region) then place; a naive
@@ -248,7 +248,7 @@ pageDeleteTuple :: PageRef -> LSN -> SlotNum -> IO ()
 pageDeleteTuple pr lsn n = do
   clearSlot pr n
   hdr <- readHeader pr
-  writeHeader pr hdr { phLsn = lsn }
+  writeHeader pr hdr { phLsn = max (phLsn hdr) lsn }
 
 -- Total bytes recoverable by compaction (internal/01 §1.3).
 pageFragmentedFree :: PageRef -> Int -> IO Int
@@ -276,7 +276,7 @@ pageCompact pr lsn pageSize = do
         (zip3 live offs images)
   mapM_ (\((s, _, _), off, b) -> writeSlot pr s off (BS.length b))
         (zip3 live offs images)
-  writeHeader pr hdr { phUpper = newUpper, phLsn = lsn }
+  writeHeader pr hdr { phUpper = newUpper, phLsn = max (phLsn hdr) lsn }
 
 -- Compaction that replaces slot n's image (grow-within-page, internal/01
 -- §1.8 flow 4): other live tuples are rewritten contiguously from the
@@ -298,7 +298,7 @@ pageCompactReplace pr lsn n newB hdr pageSize = do
   let newUpper = end - sum lens - BS.length newB
   pageSplice pr newUpper (BS.length newB) newB
   writeSlot pr n newUpper (BS.length newB)
-  writeHeader pr hdr { phUpper = newUpper, phLsn = lsn }
+  writeHeader pr hdr { phUpper = newUpper, phLsn = max (phLsn hdr) lsn }
 
 -- right-biased cumulative offsets: offs!!k is the new start of live!!k
 scanDown :: Int -> [Int] -> [Int]
@@ -335,7 +335,7 @@ pageSetTuple pr lsn n bytes = do
           let off = phUpper h - need
           pageSplice pr' off need bytes
           writeSlot pr' n off need
-          writeHeader pr' h { phUpper = off, phLsn = lsn }
+          writeHeader pr' h { phUpper = off, phLsn = max (phLsn h) lsn }
       | otherwise = do
           freeTotal <- pageFragmentedFree pr' sz'
           if freeTotal >= need
@@ -357,7 +357,7 @@ installPageImage pr img lsn = do
     else do
       pageSplice pr 0 total img
       hdr <- readHeader pr
-      if phLsn hdr /= lsn
+      if phLsn hdr < lsn
         then writeHeader pr hdr { phLsn = lsn }
         else pure ()
 

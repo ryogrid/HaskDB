@@ -12,6 +12,8 @@ data Config = Config
   , cfgStmtMemBudget  :: Int        -- PROVISIONAL (D-08): 256 MiB per statement
   , cfgCheckpointSecs :: Int        -- PROVISIONAL (D-11): 300 (time-based)
   , cfgLockWaitSecs   :: Int        -- only if D-12 chose timeouts: 10
+  , cfgDeadlockMs     :: Int        -- D-12 = detection: detector scan
+                                     -- interval in ms (docs §4.3: 1s)
   } deriving (Show)
 
 defaultConfig :: FilePath -> Config
@@ -23,4 +25,5 @@ defaultConfig dir = Config
   , cfgStmtMemBudget  = 256 * 1024 * 1024
   , cfgCheckpointSecs = 300
   , cfgLockWaitSecs   = 10
+  , cfgDeadlockMs     = 1000
   }

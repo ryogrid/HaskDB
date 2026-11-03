@@ -36,11 +36,11 @@
 
 ## Phase 3 — Transactions and locking (design/03, internal/04)
 
-- [ ] T19. `HaskDB.Txn.Manager` — begin/commit/abort, txnAppend choke point, undo list, statement marks
-- [ ] T20. `HaskDB.Txn.LockManager` — STM IS/IX/S/X + row S/X, FIFO fairness, upgrade S→X, waitForEdges
-- [ ] T21. Deadlock policy (D-12 = detection, abort youngest, `40P01`), abort channel into lock waits
-- [ ] T22. Heap ops のtransactional のintegration (locks + WAL via TxnCtx)
-- [ ] T23. **Milestone**: concurrency stress (final state = serial execution), deadlock-injection terminates with error not hang
+- [x] T19. `HaskDB.Txn.Manager` — begin/commit/abort, txnAppend choke point, undo list, statement marks
+- [x] T20. `HaskDB.Txn.LockManager` — STM IS/IX/S/X + row S/X, FIFO fairness, upgrade S→X, waitForEdges
+- [x] T21. Deadlock policy (D-12 = detection, abort youngest, `40P01`), abort channel into lock waits
+- [x] T22. Heap ops のtransactional のintegration (locks + WAL via TxnCtx)
+- [x] T23. **Milestone**: concurrency stress (final state = serial execution), deadlock-injection terminates with error not hang
 
 ## Phase 4 — Catalog, bootstrap, B+-tree (design/04, 06, internal/05+06)
 
@@ -165,3 +165,35 @@
 - (phase 2) Layout: の`let ...` のfollowed のby のa のnext-statement のwithout の`in` のon のa のpure-function のRHS の= のparse のerror (add の`in`); の`else` のaligned のat のthe のdo-block のstatement のcolumn の= のparse のerror; の`_ <- x` のas のlast のdo-statement の= のerror.
 - (phase 2) `((xor))` のimport のform のworks のonly のfor のsymbols の— のuse の`(xor)`; の`Foreign.C.String` のexports の`CString` の+ の`withCString` のboth のneeded のwhen のboth のthe のtype のand のthe のbracketed のcall のare のreferenced.
 - (phase 2) Test-suite のdeps のmust のlist のunix のexplicitly のwhen のthe のspec のimports のSystem.Posix.Files の(cabal のdoes のnot のinherit のlibrary のdeps のinto のtest-suite のstanzas).
+
+## Deviations & implementation notes (phase 3 additions)
+
+- (phase 3) のCatalog.Types のlanded のEARLY (Phase 3, not 4): heap-op のsignatures (internal/01 §1.8) のthread のa のRelationDesc; のcatalog のheaps/bootstrap/names のstill のland のin のPhase の4/6. のColumnDesc のstays のin のHeap.TupleCodec (layering note internal/01 §1.5), consumers import it from there.
+- (phase 3) のapplyRedo/applyUndo/touchesPage のsplit のinto のnew のmodule のHaskDB.Wal.Apply — shared by live rollback (abortTxn) AND recovery (design/02 §2.4 "same code path" guarantee), avoiding a module cycle.
+- (phase 3) のTxn/lock/WAL のmanagers のdo のNOT のlive のin のEnv (internal/11 §11.2 assumed them there): they travel inside TxnCtx (tcTxnMgr/tcLockMgr/tcWalMgr) — module graph stays acyclic and the docs' heap-op signatures (Env -> TxnCtx -> ...) keep working unchanged. Env's Phase-2 envNextTid TVar removed — TxnManager.tmNextTid owns the counter (persisted via the control file at checkpoints).
+- (phase 3) のrunCheckpointWith のtakes のthe のactive-txn のsnapshot + nextTid のexplicitly (docs read them from managers in Env); recovery passes ([], max cfNextTid, 1+max WAL txn id) — deviation: docs said nextTid PRESERVED, we bump past WAL-seen ids (safer reading of §3.3 "ids never repeat"; WalSpec expectation updated to 10).
+- (phase 3) のlock() のtakes のTxnId + abort-channel のTVar + LockObject + LockMode primitives (docs passed a TxnCtx); ctx-taking helpers (lockRow/lockTable/lockObj) live in Txn.Manager — avoids LockManager <-> Txn.Manager import cycle.
+- (phase 3) のDeadlock policy is its own module HaskDB.Txn.Deadlock (design/03 §3.5 calls it "a policy module"; internal/04 §4.3 sketched it in Txn.Manager — split keeps imports acyclic).
+- (phase 3) のD-12 の= のdetection のconfirmed: cfgDeadlockMs のadded のto のConfig (default 1000 = the docs' 1s scan interval).
+- (phase 3) のphLsn のstamps のmade のMONOTONIC (max) in every Storage.Page setter — undo walks newest-first and previously stamped LOWER LSNs, which broke the redo "skip iff already applied" guard (crash replay could re-materialise rolled-back tuples). High-watermark reading of design/01 §1.2.
+- (phase 3) のpinNewPage now marks the frame dirty — a fresh init image MUST reach the file (otherwise untouched pre-created pages stayed zeroed = implausible headers after recovery).
+- (phase 3) のheapInsert: WAL-before-mutation kept, but lock order fixed to ROW-then-frame EVERYWHERE (pick slot under a READ pin, take X row lock with no frame lock held, mutate under frame WRITE lock, bounded retry if another inserter took the slot first) — closing the frame-lock<->row-lock cycle invisible to the deadlock detector. Stale/advisory FSM candidates that cannot take the tuple fall back to a fresh page (internal/01 §1.8 step-5 -> step-3 loop); 54000 only if even a fresh page rejects it.
+- (phase 3) のheapAllocPage: the predecessor's phNext link is built on a scratch copy, PAGE_IMAGE WAL-logged, THEN installed (docs' step order mutated before logging — WAL-before-mutation is authoritative), and the new page is pinNewPage-init + unpin(dirty=True).
+- (phase 3) のLockManager fixes from review: regrant DROPS the releasing txn's own queued request (a dead txn was being re-granted X on an object forever); grantEntry DEQUEUES the granted waiter (phantom edges + lock-table growth otherwise).
+- (phase 3) のmodeConflict corrected to the standard matrix: X conflicts with EVERY granted mode incl. IS (the first cut let IX holders coexist with X requests -> deadlock injection never actually blocked).
+- (phase 3) のLock wait loop reads the ABORT channel before the grant flag (a victim signalled in the same STM update must see 40P01, not a spurious grant).
+- (phase 3) のdeadlockScanOnce filters waitForEdges to live Active txns before cycle search; TxnCommitting is not abortable; signalAborted sets channel+status in ONE atomically; abortStatement repairs the manager's oldest-undo IORef from the surviving undo list.
+- (phase 3) のheap ops now take the table intention lock IX (design/03 §3.2) on INSERT/UPDATE/DELETE paths so future DDL (X) excludes DML once the catalog lands.
+- (phase 3) のapplyRedo PAllocPage now also MATERIALIZES the fresh-page image (initPage when the on-disk frame's header is undecodable): extendFile leaves zeros, and after a crash with no checkpoint/no eviction the pinNewPage init image never reached the file — replayed INSERT records on that page would readHeader-fail. Idempotent: a replayed ALLOC_PAGE implies the page had no content at redoStart (second-round review MUST-FIX, reproduced empirically with a 40-insert crash sim).
+- (phase 3) のnoteLock records the request BEFORE the wait now (a request that later throws via the abort channel is still releasable at statement boundaries — internal/04 §4.2 strict reading).
+
+## Learned content (phase 3 additions)
+
+- (phase 3) GHC2021 does not give Prelude Word64/Int — import Data.Int/Data.Word; STM TVar/atomically are NOT implied by Control.Monad.STM — import GHC.Internal.Conc.Sync explicitly, and TEST stanzas that import it need ghc-internal in build-depends (hidden package).
+- (phase 3) Implicit export lists re-export NOTHING that is merely imported — LockMode/LockObject/RelationDesc accessors must be imported by consumers from their DEFINING module.
+- (phase 3) newIORef cannot run inside atomically — create per-record IORefs outside the STM block.
+- (phase 3) RIDs are NOT stable identities over time (slots are reused by later inserts): never assert "fetch of a rolled-back RID = Nothing" after further inserts; assert live outcomes.
+- (phase 3) Concurrent inserters on one page must decide (page,slot) either under the frame WRITE lock or re-verify it under that lock; a slot picked under a READ pin can be lost by a race -> retry, do not clobber.
+- (phase 3) Consistent global lock order (row X before frame write lock; never hold a frame lock across a row-lock wait) — the STM lock manager cannot see frame-lock cycles so the detector would miss them and threads would hang.
+- (phase 3) SqlError is a proper Exception (deriving Show): test harnesses can `catch` with (\(e :: SqlError) -> ...) and compare seState to a Text literal under OverloadedStrings.
+- (phase 3) Redo/undo guard soundness: undo stamps the SAME lsn as the undone record + monotonic max() keeps the page watermark above older records, which is exactly what makes redo replay and double recovery idempotent (the txn-tests recovery section asserts it).

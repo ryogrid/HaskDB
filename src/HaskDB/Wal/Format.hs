@@ -82,6 +82,30 @@ data WalPayload
   | PCheckpoint   [(TxnId, LSN)]
   deriving (Show, Eq)
 
+-- | Payload -> record tag (kept together so tags and payloads never
+--   drift apart; Txn.Manager's txnAppend uses this).
+walRecType :: WalPayload -> WalRecType
+walRecType p = case p of
+  PInsertTuple{} -> WTInsertTuple
+  PDeleteTuple{} -> WTDeleteTuple
+  PUpdateTuple{} -> WTUpdateTuple
+  PIndexInsert{} -> WTIndexInsert
+  PIndexDelete{} -> WTIndexDelete
+  PPageImage{}   -> WTPageImage
+  PAllocPage{}   -> WTAllocPage
+  PCreateTable{} -> WTCreateTable
+  PCreateIndex{} -> WTCreateIndex
+  PCommit        -> WTCommit
+  PAbort         -> WTabort
+  PCheckpoint{}  -> WTCheckpoint
+
+-- | Construct a transaction record chained at `prev` (internal/04
+--   §4.1: the caller fills wrPrevTxn BEFORE appending; txnAppend is
+--   the only place that computes it).
+walRecord :: TxnId -> LSN -> WalPayload -> WalRecord
+walRecord tid prev p = WalRecord
+  { wrType = walRecType p, wrTxn = tid, wrPrevTxn = prev, wrPayload = p }
+
 -- ---------------------------------------------------------------------------
 -- Value codec (canonical, tag-prefixed — internal/03 §3.2: index keys are
 -- self-describing in the WAL; same numbering as Common.encodeValue)
