@@ -1,0 +1,30 @@
+cabal-version:  2.4
+name:           haskdb
+version:        0.1.0
+license:        NONE
+author:         HaskDB project
+-- GHC + boot libraries only in the library; see design/11 D-06 (network
+-- package gets added in Phase 7 for the socket layer).
+-- Build: cabal build ; language GHC2021 per internal-design/00 §0.7.
+-- libgmp-dev is absent on this box: a libgmp.so symlink sits in the
+-- ghcup toolchain lib dir so -lgmp resolves at link time.
+
+library
+    default-language:  GHC2021
+    default-extensions: OverloadedStrings
+    build-depends:    base, bytestring, containers, binary, array, text, mtl
+    hs-source-dirs:   src
+    exposed-modules:  HaskDB.Common.Types
+                    , HaskDB.Common.Error
+                    , HaskDB.Common.Codec
+                    , HaskDB.Common.Config
+    ghc-options:      -Wall -optl-L/home/ryo/.local/lib
+
+test-suite codec-tests
+    type:               exitcode-stdio-1.0
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+    main-is:            Spec.hs
+    build-depends:      base, bytestring, containers, binary, array, text, mtl, haskdb
+    hs-source-dirs:     test
+    ghc-options:        -Wall -optl-L/home/ryo/.local/lib
