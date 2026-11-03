@@ -12,7 +12,7 @@ author:         HaskDB project
 library
     default-language:  GHC2021
     default-extensions: OverloadedStrings
-    build-depends:    base, bytestring, containers, binary, array, text, mtl, stm, ghc-internal, unix, directory
+    build-depends:    base, bytestring, containers, binary, array, text, mtl, stm, ghc-internal, unix, directory, filepath
     hs-source-dirs:   src
     exposed-modules:  HaskDB.Common.Types
                     , HaskDB.Common.Error
@@ -23,6 +23,11 @@ library
                     , HaskDB.Storage.BufferPool
                     , HaskDB.Storage.FreeSpace
                     , HaskDB.Heap.TupleCodec
+                    , HaskDB.Wal.Format
+                    , HaskDB.Wal.Manager
+                    , HaskDB.Server.Control
+                    , HaskDB.Server.Env
+                    , HaskDB.Wal.Recovery
     ghc-options:      -Wall -optl-L/home/ryo/.local/lib
 
 test-suite codec-tests
@@ -40,5 +45,14 @@ test-suite storage-tests
     default-extensions: OverloadedStrings
     main-is:            StorageSpec.hs
     build-depends:      base, bytestring, containers, binary, array, text, mtl, stm, directory, filepath, haskdb
+    hs-source-dirs:     test
+    ghc-options:        -Wall -optl-L/home/ryo/.local/lib
+
+test-suite wal-tests
+    type:               exitcode-stdio-1.0
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+    main-is:            WalSpec.hs
+    build-depends:      base, bytestring, containers, binary, array, text, mtl, unix, directory, filepath, haskdb
     hs-source-dirs:     test
     ghc-options:        -Wall -optl-L/home/ryo/.local/lib

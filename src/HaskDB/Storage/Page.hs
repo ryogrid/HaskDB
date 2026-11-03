@@ -305,6 +305,44 @@ scanDown :: Int -> [Int] -> [Int]
 scanDown _ []       = []
 scanDown e (x : xs) = let e' = e - x in e' : scanDown e' xs
 
+-- | Force-place a tuple into a slot: no-op when the slot already holds
+--   exactly these bytes (idempotence guard, internal/03 §3.4/3.7); grow
+--   the slot directory when the slot never existed; compact when
+--   contiguous free space is too small.  This is the redo (insert
+--   placement) and undo (before-image restore) choke point.
+pageSetTuple :: PageRef -> LSN -> SlotNum -> BS.ByteString -> IO ()
+pageSetTuple pr lsn n bytes = do
+  hdr <- readHeader pr
+  sz <- pageFrameLen pr
+  let need = BS.length bytes
+  ms <- readSlot pr n
+  case ms of
+    Just (off, len)
+      | len == need -> do
+          cur <- pageSlice pr off len
+          if cur == bytes then pure ()
+            else pageUpdateTuple pr lsn sz n bytes
+      | otherwise -> pageUpdateTuple pr lsn sz n bytes
+    Nothing
+      | n >= slotCount hdr -> do
+          let h1 = hdr { phLower = headerSize + (n + 1) * itemSize }
+          writeHeader pr h1
+          placeDead pr h1 sz need
+      | otherwise -> placeDead pr hdr sz need
+  where
+    placeDead pr' h sz' need
+      | pageFreeContiguous h >= need = do
+          let off = phUpper h - need
+          pageSplice pr' off need bytes
+          writeSlot pr' n off need
+          writeHeader pr' h { phUpper = off, phLsn = lsn }
+      | otherwise = do
+          freeTotal <- pageFragmentedFree pr' sz'
+          if freeTotal >= need
+            then pageCompactReplace pr' lsn n bytes h sz'
+            else throwSql "XX000"
+                   "pageSetTuple: restore/redo image does not fit page"
+
 -- Whole-image replacement (splits/compaction scratch-copy pattern).
 -- The image already carries its header; we re-stamp the LSN so the
 -- invariant "on-page phLsn == record LSN" always holds.

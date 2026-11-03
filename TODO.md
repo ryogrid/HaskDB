@@ -27,12 +27,12 @@
 
 ## Phase 2 — WAL and recovery (design/02, internal/03)
 
-- [ ] T13. `HaskDB.Wal.Format` — record types, framing codec (u32len, tag, txnId, prevTxnLSN, payload, CRC32)
-- [ ] T14. `HaskDB.Wal.Manager` — buffered append (MVar-serialised LSN order), flushWalUpTo + fdatasync, readRecordAt (buffer-aware)
-- [ ] T15. Control file (design/00 §0.8, internal/11 §11.4) — text key=value, atomic tmp+rename+dir fsync
-- [ ] T16. `HaskDB.Wal.Recovery` — analysis/redo/undo (prevTxnLSN chain, pd_lsn guard, undo のnever のinstalls のimage のrule)
-- [ ] T17. `applyRedo`/`applyUndo` のper-payload-type のsingle-choke-point のimplementation (live-rollback のsame のpath)
-- [ ] T18. **Milestone**: crash tests — kill -9 harness, restart, verify committed prefix survives + uncommitted is undone
+- [x] T13. `HaskDB.Wal.Format` — record types, framing codec (u32len, tag, txnId, prevTxnLSN, payload, CRC32)
+- [x] T14. `HaskDB.Wal.Manager` — buffered append (MVar-serialised LSN order), flushWalUpTo + fdatasync, readWalAll (manager-handle; buffer-aware read deferred)
+- [x] T15. Control file (design/00 §0.8, internal/11 §11.4) — text key=value, atomic tmp+fsync+rename+dir fsync
+- [x] T16. `HaskDB.Wal.Recovery` — analysis/redo/undo (prevTxnLSN chain, phLsn guard, undo のnever のinstalls のimage のrule, garbage-tail truncate)
+- [x] T17. `applyRedo`/`applyUndo` のper-payload-type のsingle-choke-point のimplementation (live-rollback のsame のpath; INDEX_*/CREATE_* の= のno-op のstubs のuntil のPhase の4/5)
+- [x] T18. **Milestone**: crash-sim tests (deterministic: WAL on disk + stale pages + garbage tail → redo winners, undo loser, tail cut, idempotent double recovery; the kill -9 process harness lands with Phase 7 server / T40)
 
 ## Phase 3 — Transactions and locking (design/03, internal/04)
 
@@ -135,3 +135,33 @@
 - (phase 1) `withMVar lock $ do ...` のmis-parses の(BlockArguments のeats のthe のdo-block のas のthe のfunction のarg) の→ の`$ \_ -> do`; のand のa のhanging の`)` のmust のsit のat のcolumn >= のthe のdo-block のcolumn の(else のparse のerror).
 - (phase 1) newtype Reader の: のimporting のthe のtype のname のalone のdoes のnot のbring のthe のconstructor の— のuse の`Reader(..)` のwhere のthe のconstructor のis のused の(decodeFail のhelper のpattern).
 - (phase 1) Common.Codec のputters のtake のWord64 の→ のcall のsites のof のphNext(Word32)/kindCode(Word16) のneed のexplicit のfromIntegral.
+
+- (phase 2) WAL file names: docs never name the three files → implementation choice `haskdb.data` / `haskdb.wal` / `haskdb.control` inside cfgDataDir (HaskDB.Wal.Recovery).
+- (phase 2) Framing totalLen: internal/03 §3.2 comment says "length of everything after this field" but the crc is the last 4 bytes; we count totalLen = tag+txn+prev+payload, EXCLUDING the crc field (encode/decode mutually consistent; noted in Wal/Format header).
+- (phase 2) No BTREE_SPLIT payload (internal/03 §3.1 payload set — design/02 のtable のlist のhas のnone のeither; splits are logged as PPageImage per §3.7 note).
+- (phase 2) PInsertTuple carries (page, slot, bytes): design/02 のredo のneeds のthe のRID のslot のto re-place the tuple; internal/03 のconstructor のsketch omits のslot の→ のdesign のwins の(3-arg のconstructor).
+- (phase 2) WalManager state: docs' separate `wmFileSize` TVar folded into `wsNextLSN` inside the single `WalState` MVar — appends are serialised by that same MVar so LSN order is already guaranteed.
+- (phase 2) Wal/Manager opens the WAL via `openFd` (append flag) + `fdToHandle`, keeping the raw `Fd` for `fdatasync` (same idiom as FileManager needed for fsync; internal/03 のprefers のfileSynchronizeData の— のfdatasync のis のthe のsame のlibc のcall).
+- (phase 2) `truncateWal` (FFI libc `truncate` on the path) is a recovery helper: after analysis the torn/garbage tail beyond the last valid record is cut so later appends stay LSN-reachable. Docs are silent on tail handling; chosen for restartability.
+- (phase 2) `flushWalUpTo`: docs' re-check loop implemented as `flushStep` + re-loop; no-op only when flushed≥target AND buffer empty; target > wsNextLSN throws XX000 (caller error) to bound looping. D-15 group-commit batches inside this function only.
+- (phase 2) Env record lives in new module `HaskDB.Server.Env` and ControlFile in `HaskDB.Server.Control` — the docs name the flow/structure (§11.2/§11.4) but not the module; implementation choice.
+- (phase 2) Recovery undo losers = TxnRunning AND TxnAborted (docs Phase C says Running only); with steal/no-force an aborted txn's stolen-and-flushed pages must be undone too — redo re-establishes them first, so undoing both is safe + idempotent.
+- (phase 2) CHECKPOINT payload = (txnId, oldest LSN) per docs; recovery finds a checkpoint-only txn's *most recent* LSN by forward-scanning from that oldest LSN (`fixLast`) — valid because the WAL file is never truncated/reused, only garbage tails are cut.
+- (phase 2) redo/undo of INDEX_* and CREATE_* payloads = no-op stubs until the catalog (Phase 4) and B-tree (Phase 5) layers exist; redo/undo of page-level payloads is the `pageSetTuple` choke point in Storage.Page.
+- (phase 2) Recovery Phase D catalog/FSM rebuild deferred (no catalog yet): FreeSpaceMap starts fresh; redoStart = min dirty-page first-LSN, or walEnd when dirty map empty.
+- (phase 2) runCheckpoint active-txn snapshot = [] until Txn.Manager (Phase 3) exists; nextTid is read from Env's `envNextTid` TVar (docs §3.5 reads it from the manager).
+- (phase 2) `readWalAll` reads via the manager's own handle (hSeek 0 + size via System.Posix.Files) — NOT buffer-aware (buffered-but-unwritten bytes beyond file size are invisible). Acceptable for recovery (pre-crash WAL is always flushed up to ckpt) + the Phase-7 test harness flushes before "crash"; revisit if needed.
+- (phase 2) pageSetTuple grow: when the slot never existed and `n >= slotCount`, extend `phLower` to cover n+1 items before placing (dead-slot restore after redo needs this). Compaction fallback guarded by `pageFragmentedFree` — else throwSql "XX000" (undo/redo image does not fit; a corrupt-state signal, never silent clobber).
+- (phase 2) writeControl tmp name is unique-per-pid + `trunc = True` (unix `openFd` does NOT truncate by default — review MUST-FIX #1: a stale tmp from a crashed checkpoint would otherwise poison every later boot via rename tail bytes).
+- (phase 2) Control dir fsync: open the directory fd with `directory = True` and fsync the RAW Fd via `closeFd` — `fdToHandle` on a directory fd fails "is a directory".
+
+## Learned content (phase 2 additions)
+
+- (phase 2) text-2.1.3 のAPI のchanges: `Data.Text` のdoes のNOT のexport のisEmpty/readInt/decodeUtf8'; のuse の`Data.Text.Encoding.decodeUtf8Lenient :: ByteString -> Text` のand のnumber-parse のvia の`reads (unpack v)` + `Data.Char.isSpace`.
+- (phase 2) unix-2.8.7.0: OpenMode のctors のare のReadOnly/WriteOnly/ReadWrite の(NOT のReadonly/WriteMode); の`OpenFileFlags` のfields のare のappend/exclusive/noctty/nonBlock/trunc/nofollow/`creat :: Maybe FileMode`/cloexec/directory/sync の(no のstreamLock/fileCreation/fileCreation のfield) — record-update のfields のmust のbe のexplicitly のimported.
+- (phase 2) Creating files via `openFd` のneeds の`creat = Just stdFileMode` の(System.Posix.Files); のopenFd のdoes のNOT のadd のO_TRUNC の→ のset の`trunc = True` のwhen のoverwriting.
+- (phase 2) GHC のopenFile/withBinaryFile のperform のNON-BLOCKING のflocks の→ のreopening のa のfile のthat のalready のhas のan のopen のunix のhandle のgives の"resource busy (file is locked)" (EAGAIN). NEVER double-open the same file concurrently; read through the manager/FileManager のhandle のinstead.
+- (phase 2) `Map.insertWith f` のreceives の`f newValue oldValue` の(arg-order のfootgun のhit のtwice のwhile のfixing のthe のdirty-map / merge のlogic のin analyze).
+- (phase 2) Layout: の`let ...` のfollowed のby のa のnext-statement のwithout の`in` のon のa のpure-function のRHS の= のparse のerror (add の`in`); の`else` のaligned のat のthe のdo-block のstatement のcolumn の= のparse のerror; の`_ <- x` のas のlast のdo-statement の= のerror.
+- (phase 2) `((xor))` のimport のform のworks のonly のfor のsymbols の— のuse の`(xor)`; の`Foreign.C.String` のexports の`CString` の+ の`withCString` のboth のneeded のwhen のboth のthe のtype のand のthe のbracketed のcall のare のreferenced.
+- (phase 2) Test-suite のdeps のmust のlist のunix のexplicitly のwhen のthe のspec のimports のSystem.Posix.Files の(cabal のdoes のnot のinherit のlibrary のdeps のinto のtest-suite のstanzas).
