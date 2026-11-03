@@ -37,6 +37,10 @@ library
                     , HaskDB.Txn.Deadlock
                     , HaskDB.Heap.Heap
                     , HaskDB.Wal.Recovery
+                    , HaskDB.Sql.Lexer
+                    , HaskDB.Sql.Ast
+                    , HaskDB.Sql.Parser
+                    , HaskDB.Sql.Analyzer
     ghc-options:      -Wall -optl-L/home/ryo/.local/lib
 
 test-suite codec-tests
@@ -81,5 +85,14 @@ test-suite txn-tests
     default-extensions: OverloadedStrings
     main-is:            TxnSpec.hs
     build-depends:      base, bytestring, containers, binary, array, text, mtl, stm, ghc-internal, unix, directory, filepath, haskdb
+    hs-source-dirs:     test
+    ghc-options:        -Wall -optl-L/home/ryo/.local/lib
+
+test-suite sql-tests
+    type:               exitcode-stdio-1.0
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+    main-is:            SqlSpec.hs
+    build-depends:      base, bytestring, containers, binary, array, text, mtl, unix, directory, filepath, haskdb
     hs-source-dirs:     test
     ghc-options:        -Wall -optl-L/home/ryo/.local/lib

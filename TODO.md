@@ -51,10 +51,10 @@
 
 ## Phase 5 — SQL front end (design/05, internal/07)
 
-- [ ] T28. Lexer (UTF-8 validation, `''` escapes, `--` comments, numeric overflow `22003`)
-- [ ] T29. Recursive-descent parser per grammar §5.2 (function-per-production; unsupported-keyword blocklist のnicety)
-- [ ] T30. Analyzer — name resolution, correlation ban (`0A000` のspecific のerror), §5.5 のper-clause のrules, aggregate rules (`42803`), int→float promotion
-- [ ] T31. **Milestone**: per-production positive tests + every §0.3 "not supported" negative test のasserting のspecific のerror
+- [x] T28. Lexer (UTF-8 validation, `''` escapes, `--` comments, numeric overflow `22003`)
+- [x] T29. Recursive-descent parser per grammar §5.2 (function-per-production; unsupported-keyword blocklist のnicety)
+- [x] T30. Analyzer — name resolution, correlation ban (`0A000` のspecific のerror), §5.5 のper-clause のrules, aggregate rules (`42803`), int→float promotion
+- [x] T31. **Milestone**: per-production positive tests + every §0.3 "not supported" negative test のasserting のspecific のerror
 
 ## Phase 6 — Planner + executor (design/07,08, internal/08,09)
 
@@ -220,3 +220,43 @@
 - (phase 4) のtest ground truth must dedup its page list (nub) once CREATE TABLE pre-allocates its head page — scanning the head twice (catalog list + RID-derived list) double-counts rows.
 - (phase 4) のa test that deletes INDEX entries only must compare against heap-minus-deleted: the heap rows stay, so plain heap ground truth breaks after the delete phase; run the crash/recovery check BEFORE the delete phase so replay of the fill is verified.
 - (phase 4) のpage 0's counter field decode failure must not default to relid 0 (the no-owner sentinel): decode errors throw XX000 (corrupt-data rule design/01 §1.9).
+## Deviations & implementation notes (phase 5 additions)
+
+- (phase 5) UTF-8 のvalidation のis の`Data.Text.Encoding.decodeUtf8'` のof のthe のWHOLE input (22P02) instead のof のinternal/07 §7.1's のhand-rolled のDFA; tokPos counts BYTES.
+- (phase 5) のlexer のemits `TSymbol '.'` — internal/07 §7.1's symbol set ( ) , ; * = < > omits it, yet §7.2 の`ColRef { crQualifier }` のand のthe のcorrelation/qualified のresolution のin §7.4 のstep の2 のneed のqualified のnames; のdesign/05 §5.2 のNEVER のgives a の`col_ref` のproduction のat のall (no の`.` のanywhere のin のthe のEBNF). のDoc のconflict のreported のboth のways; のthe のdot のis のrequired のto のbuild のthe のAST.
+- (phase 5) lexNum のrewritten: a の'.' のNOT のfollowed のby のa のdigit は NOT のa のnumber (it のlexes のas のthe のTSymbol の'.'); のexponent のsign は taken のONLY のdirectly のafter のe/E; のa のdangling の'e' は NOT のconsumed. のA のfloat のliteral のwhose のtext のdenotes a NON-FINITE のvalue (`1e400`) は rejected のwith の22P02 — design/05 §5.4 のsays "`Infinity` literals のare のlikewise rejected" のbut のnames のno のSQLSTATE; の22P02 = "invalid text representation (bad literal)" のper のdesign/09 §9.6 のtable の(provisional のchoice).
+- (phase 5) のparser のis のdirect の`Either SqlError (a, [Tok])` のdescent, NOT のthe のinternal/07 §7.3 の`Parser` のnewtype/monad — same のfunction-per-production のshape, のnames のmirror §5.2 のproductions の(pStatement/pSelectStmt/pFromList/pOrderList/pPred/pOperand...).
+- (phase 5) §5.11 のvs §7.3 のnicety のconflict のresolved のas のfollows: `reservedWords` は = §5.11's のset のEXACTLY のplus の`is` (a §5.2 のkeyword のat のline の76, so §5.11 のmakes のit のreserved の→ の42601 のas のan のidentifier); のthe の`unsupportedWords` のblocklist のis のchecked のONLY のwhere the のconstruct のwould のlegally のappear (statement のhead, clause のboundaries のvia のpeekUnsupported, のselect-item/operand/from-item/order-item のheads, のVALUES のliterals, のUPDATE のSET のRHS) → の0A000 のnaming のthe のconstruct. のpIdent のitself のchecks のONLY reserved のwords, のso の`create table limit (…)` のparses の(per §5.11 のthose のare のNOT のkeywords).
+- (phase 5) §7.3 のblocklist のwords のare のchecked のat のhead のpositions のvia の`headUnsupported` (= のblocklist のMINUS のreserved), のso のa のreserved のword のnever のloses のthe の42601 のclass.
+- (phase 5) の`RSelect` のcarries の`rsOutNames :: [Text]` のand の`resolveItem` のreturns の`[(RSelectItem, Maybe Text)]` — §7.4 のRSelectItem のhas NO alias のslot のyet のits のstep の6 のneeds のoutput のnames (alias の| のcolumn のname の| の`?column?`); のthe のdocs のare のself-inconsistent, のthe のfield のis のunavoidable (ORDER BY のand のderived-table のnaming のconsume it).
+- (phase 5) のAnalyzer のscope のdiscipline: の`outer` (ENCLOSING のquery のnames, used ONLY to のupgrade a のresolution のmiss to のthe のspecific の0A000) のis のkept SEPARATE のfrom の`outerSub` (enclosing + のthis のquery's のnames, inherited のby のits のsubqueries). のPassing のthe のmerged のlist into のthe のcurrent-scope のresolution のmade `select q.id のfrom のusers` のreport の0A000 のinstead のof の42P01.
+- (phase 5) のUPDATE/DELETE のthread のtheir のone-slot のscope のnames のas のouterSub の(earlier のcut のpassed の`[] []`, のso のcorrelated のreferences のinside のa のDML のWHERE のdegraded のto の42703 — §5.6 の"not a のsilent のinner-scope のmiss").
+- (phase 5) のFROM-subqueries (derived のtables) のsee のENCLOSING のnames のONLY: のSQL のdoes のnot のlet のa のderived のtable のreference のits のFROM siblings, のso のthose のnames のnever のenter のthe のcorrelation のset.
+- (phase 5) の`resolveCol`: のqualified `q.c` のnow のtests のthe のQUALIFIER のfirst (§7.4 のstep の2 の"find slot named q (else 42P01), then column c in it (else 42703)") — のthe のfirst のcut のreported の42P01 のfor のa のPRESENT のslot のwith のa のmissing のcolumn.
+- (phase 5) のIN-subquery のtype のrule のis のnow のSTRICT (`t == rcType のrc`): のdesign/05 の§5.3 のpromotes INTEGER のLITERALS のONLY, のand のinternal/00 の§0.2 の`compareSql` のrequires のequal のtypes — のthe のfirst のcut のlet のan のINT64 のcolumn のcompare のagainst のa のFLOAT64 のsubquery のcolumn (42804 のnow).
+- (phase 5) の`pPrimaryPred` のdispatches のon のthe のtoken のafter `'('`: `'(' select_stmt ')'` のis のa のSCALAR のSUBQUERY のoperand (§5.2 のlines の75/79, の§5.5/§5.6) のwhile `'(' predicate ')'` のis のa のparenthesized のpredicate; のwithout のthe のdispatch の`where (select …) > 2` のwas のunparseable (review のMUST-FIX).
+- (phase 5) のUPDATE のSET のRHS のuses の`pColRef` (§5.2 の`assign ::= ident '=' ( literal | col_ref )`) — のqualified のcol_refs のare のrepresentable のin のthe のAST のand のwere のdropped.
+- (phase 5) の§5.2 の`ordinal` のis のan UNSIGNED のinteger: のa のnegative のORDER BY のkey のis のrejected のat のPARSE のtime の(42601); のout-of-range のpositives のstay の42703 (§7.4 のstep の5).
+- (phase 5) のVALUES のliterals のget のthe のblocklist のnicety (`values (null)` の→ の0A000) — §7.3 の"where they のwould のlegally のappear".
+- (phase 5) のINSERT のVALUES のarity のmismatch のuses のSQLSTATE の`4280`: のneither のdoc のassigns one のand のdesign/09 §9.6 のhas のno のrow for it; のit のis のPostgreSQL's のown のcode のand のis の4 のchars, のnot のthe の5-char のconvention のshown のin internal/00 §0.4 の(PROVISIONAL — flag のfor のthe のmaintainer).
+- (phase 5) のanalyzer のVARCHAR の1024-byte のcheck は applied のat のliteral→column のbinding のONLY (INSERT/UPDATE), のper のdesign/05 §5.3; のinternal/07 §7.1 のasked for の"every のstring のliteral のthat のflows into a VARCHAR-typed のposition" (incl. のcomparisons) — のconflict, のdesign/ のwins のsemantics.
+- (phase 5) のCREATE のTABLE の"≥1 のcolumn" のanalyzer のguard の(42600) は defensive/unreachable: のthe のparser のrejects の`()` のfirst のwith の42601; のno のdoc のgives の42600.
+- (phase 5) のINSERT のwith a PARTIAL のcolumn のlist のis のaccepted (docs のsilent, のno のdefaults のexist のin the のsystem) — のleaves のthe のremaining のcolumns のundefined; のan のexecutor のconcern for のPhase の6, のNOT のa のchoice のmade のhere.
+- (phase 5) のAnalyzer のerror のctors のreuse のHaskDB.Common.Error's のshared のset (42P01/42703/42702/42P07/42701/22001/21000 のvia のerrUndefinedTable/errUndefinedColumn/errAmbiguous/errDupName/errDupColumn/errStringTooLong/errScalarSubqRows) per internal/00 §0.4; のlocal のctors のexist のONLY where のthe のshared のset のhas のno のconstructor (correlation の0A000, のgrouping の42803 のwith のthe のcolumn のname, aggregate/literal のtype のnotes の42804, のORDER-BY の42703 のwith のthe のterm).
+- (phase 5) の`analyze :: CatalogCache -> Statement -> IO Analyzed` のthrows のSqlError のin IO (the のdocs' のsignature のis IO) のrather のthan のreturning のEither; のDDL のcases のpass のthe のRAW のstmts のthrough のto の`ACreateTable/ACreateIndex` (the のexecutor のre-checks のunder のthe のtable のX のlock).
+
+## Learned content (phase 5 additions)
+
+- (phase 5) のByteString は NOT のpattern-matchable のas `(a : b : _)` (type の[a0]) — のguard のon の`BS.head`/`BS.index` のinstead.
+- (phase 5) のcomment-skip のarithmetic のfootgun: のwhen の`body` のhas のALREADY のdropped のthe のtwo の'-' のbytes, のthe のrest のis の`BS.drop t body`, のNOT の`BS.drop (2+t) body` の(the のfirst のcut のate のtwo のtokens のchars).
+- (phase 5) のa の"takeWhile のthen のfragment" のscanner のCANNOT のsee のthe の'.': の`extendFrac` のmust のtest のthe のFOLLOWING のbyte のdirectly, のand のthe のexponent のmust のreturn の`Maybe` のso a のdangling の'e' は not のswallowed.
+- (phase 5) の`-` のis のfolded のINTO のthe のnumeric のtoken のby のthe のlexer, のso の`order by -1` のarrives のas の`TInt (-1)` — のunsigned のproductions のmust のbe のenforced のin のthe のPARSER.
+- (phase 5) のevery のident のentry point のmust のroute のthrough の`pIdent`/`pColRef`: のmatching の`TIdent n` のDIRECTLY のat のthe のselect-item/operand/order-item/from-item のheads のlets のreserved のwords (`on`, `is`, …) のpass のas のidentifiers (42601 のexpected).
+- (phase 5) の`pOptAlias` のbare-alias のmust のreject のreserved のAND のblocklisted のwords, のelse `from のusers のlimit の3` のbinds の`limit` のas のan のalias のand のthe の0A000 のnicety のnever のfires.
+- (phase 5) のderived-table のbranch のmust の`eatSym ')'` のBEFORE のlooking のat のthe のalias — のchecking のthe のalias のfirst のmakes のEVERY のlegal のderived のtable のfail の"requires an alias".
+- (phase 5) のAnalyzer のtests のmust のuse の`seMessage` のfor のmessage needles のand の`T.pack want == seState e` のfor のcodes (seState のis のText, のliterals のare のString のwithout のOverloadedStrings のat のthe のcomparator).
+- (phase 5) の`SelAgg` のalias のmust のbe のKEPT のin の`resolveItem` — のdropping it のerases の`count(id) as n` のfrom のrsOutNames.
+- (phase 5) の`AInsert _ _ rows` のand のthe のother のAnalyzed のctors のare の1-arity のwrappers: の`ACreateTable (CreateTableStmt …)` のneeds のparens (the のctor のtakes のONE のarg).
+- (phase 5) のGHC のreports のduplicate のtype-signature/redefinition のerrors のacross のan inserted のblock のbefore のa のreal のone — のcheck の`grep -c "^name ::"` のbefore のrebuilding.
+- (phase 5) のforcing の-Wall のoutput: のcabal のcaches のclean のbuilds の(`cabal build` のsays の"Up to のdate"), のso のappend の`-- probe` のto のeach のsource のfile, のbuild, のthen の`sed -i '/^-- probe$/d'` — の`-fforce-recomp` のvia の--ghc-options のdoes のNOT のwork のafter のthe のfact のis のcached.
+- (phase 5) の`cabal test all` のruns のall の6 のsuites; のsql-tests のneeds のno のscratch のdirectory, のthe のothers のdo (rm -rf のthem のbetween のruns).
