@@ -41,6 +41,13 @@ library
                     , HaskDB.Sql.Ast
                     , HaskDB.Sql.Parser
                     , HaskDB.Sql.Analyzer
+                    , HaskDB.Executor.Types
+                    , HaskDB.Executor.MemoryBudget
+                    , HaskDB.Executor.Eval
+                    , HaskDB.Executor.Operators
+                    , HaskDB.Executor.Stmts
+                    , HaskDB.Planner.Planner
+                    , HaskDB.Planner.CostModel
     ghc-options:      -Wall -optl-L/home/ryo/.local/lib
 
 test-suite codec-tests
@@ -96,3 +103,12 @@ test-suite sql-tests
     build-depends:      base, bytestring, containers, binary, array, text, mtl, unix, directory, filepath, haskdb
     hs-source-dirs:     test
     ghc-options:        -Wall -optl-L/home/ryo/.local/lib
+
+test-suite exec-tests
+    type:               exitcode-stdio-1.0
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+    main-is:            ExecSpec.hs
+    build-depends:      base, bytestring, containers, binary, array, text, mtl, stm, ghc-internal, unix, directory, filepath, haskdb
+    hs-source-dirs:     test
+    ghc-options:        -Wall -rtsopts -optl-L/home/ryo/.local/lib
