@@ -37,7 +37,8 @@ data TxnLocalState = TxnLocalState
   { tlsLastLSN  :: !LSN
   , tlsUndo     :: [LSN]        -- change-record LSNs, newest first
   , tlsStmtMark :: !Int         -- length of tlsUndo at statement start
-  , tlsLockMark :: !Int }       -- length of tcLocks at statement start
+  , tlsLockMark :: !Int         -- length of tcLocks at statement start
+  , tlsStageMark :: !Int }      -- length of tcStaged at statement start
   deriving (Show)
 
 data ActiveInfo = ActiveInfo
@@ -59,7 +60,8 @@ data TxnCtx = TxnCtx
   , tcLocks    :: TVar [LockObject]       -- acquired, newest first
   , tcWalMgr   :: WalManager
   , tcLockMgr  :: LockManager
-  , tcTxnMgr   :: TxnManager }
+  , tcTxnMgr   :: TxnManager
+  , tcStaged   :: TVar [IO ()] }  -- cache/DDL staging closures (internal/06 §6.3)
 
 newTxnManager :: TxnId -> IO TxnManager
 newTxnManager tid0 = do
@@ -80,11 +82,14 @@ beginTxn tm lm env = do
     writeTVar (tmActive tm) (Map.insert tid info act)
     pure (tid, info)
   st <- newTVarIO TxnLocalState { tlsLastLSN = 0
-                                , tlsUndo = [], tlsStmtMark = 0, tlsLockMark = 0 }
+                                , tlsUndo = [], tlsStmtMark = 0, tlsLockMark = 0
+                                , tlsStageMark = 0 }
   lck <- newTVarIO []
+  sg <- newTVarIO []
   pure TxnCtx { tcEnv = env, tcTxnId = tid, tcState = st
               , tcAbort = aiAbort ai, tcLocks = lck
-              , tcWalMgr = envWalMgr env, tcLockMgr = lm, tcTxnMgr = tm }
+              , tcWalMgr = envWalMgr env, tcLockMgr = lm, tcTxnMgr = tm
+              , tcStaged = sg }
 
 -- | Abort-channel check at operation boundaries (internal/04 §4.3
 --   "checked by lock waits and statement boundaries").
@@ -96,13 +101,23 @@ checkAbort ctx = do
     Nothing  -> pure ()
 
 -- | Statement marks (internal/04 §4.2): statement-atomicity rollback
---   undoes down to these marks.
+--   undoes down to these marks (undo list, locks, staged closures).
 beginStatement :: TxnCtx -> IO ()
 beginStatement ctx = do
   n <- readTVarIO (tcState ctx)
   ls <- readTVarIO (tcLocks ctx)
+  sg <- readTVarIO (tcStaged ctx)
   atomically $ writeTVar (tcState ctx)
-    (n { tlsStmtMark = length (tlsUndo n), tlsLockMark = length ls })
+    (n { tlsStmtMark = length (tlsUndo n), tlsLockMark = length ls
+       , tlsStageMark = length sg })
+
+-- | Stage a cache/DDL update closure (internal/06 §6.3 staging model):
+--   appended to the txn's staging list; commitTxn applies them in
+--   registration order after the WAL flush, aborts discard them.
+stageAppend :: TxnCtx -> IO () -> IO ()
+stageAppend ctx act = atomically $ do
+  sg <- readTVar (tcStaged ctx)
+  writeTVar (tcStaged ctx) (act : sg)
 
 findActive :: TxnCtx -> IO (Maybe ActiveInfo)
 findActive ctx = do
@@ -187,6 +202,13 @@ commitTxn ctx = do
   flushWalUpTo (tcWalMgr ctx) lsn            -- <<< commit point
   unlockAll (tcLockMgr ctx) (tcTxnId ctx)
   removeActive ctx
+  -- staged cache updates (catalog cache, internal/06 §6.3) apply AFTER the
+  -- commit point, in registration order; aborts never reach here
+  sg <- atomically $ do
+    s <- readTVar (tcStaged ctx)
+    writeTVar (tcStaged ctx) []
+    pure s
+  mapM_ id (reverse sg)
 
 -- | abortTxn flow (internal/04 §4.2 live rollback): undo newest-first
 --   through the SAME applyUndo used by recovery, then PAbort (not in
@@ -204,6 +226,7 @@ abortTxn ctx = do
   _ab <- appendRecord wal (walRecord (tcTxnId ctx) (tlsLastLSN st') PAbort)
   unlockAll (tcLockMgr ctx) (tcTxnId ctx)
   removeActive ctx
+  atomically (writeTVar (tcStaged ctx) [])   -- staged updates discarded
 
 -- | Statement-level rollback (internal/04 §4.2 "same loop with a
 --   statement mark"): undo entries pushed since the undo mark, locks
@@ -221,6 +244,8 @@ abortStatement ctx = do
   atomically $ do
     stv <- readTVar (tcState ctx)
     writeTVar (tcState ctx) stv { tlsUndo = drop n (tlsUndo stv) }
+    sgv <- readTVar (tcStaged ctx)
+    writeTVar (tcStaged ctx) (drop (length sgv - tlsStageMark st) sgv)
   -- repair the checkpoint anchor: the manager's oldest-undo IORef must
   -- match the SURVIVING undo list (review nice-to-have #10)
   info <- findActive ctx

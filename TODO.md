@@ -44,10 +44,10 @@
 
 ## Phase 4 — Catalog, bootstrap, B+-tree (design/04, 06, internal/05+06)
 
-- [ ] T24. `HaskDB.Catalog.Types/Bootstrap` — page 0 header, hask_class/hask_attribute self-describing bootstrap
-- [ ] T25. `HaskDB.Catalog.Cache` — staged updates (commit applies, abort discards), version counter
-- [ ] T26. `HaskDB.Index.BTree` — search/range/insert (split+propagate)/delete (no rebalance)/bulk build, per-index latch
-- [ ] T27. **Milestone**: index property tests vs Data.Map (incl. after crash/recovery), catalog restart test
+- [x] T24. `HaskDB.Catalog.Types/Bootstrap` — page 0 header, hask_class/hask_attribute self-describing bootstrap
+- [x] T25. `HaskDB.Catalog.Cache` — staged updates (commit applies, abort discards), version counter
+- [x] T26. `HaskDB.Index.BTree` — search/range/insert (split+propagate)/delete (no rebalance)/bulk build, per-index latch
+- [x] T27. **Milestone**: index property tests vs heap ground truth (incl. after crash/recovery), catalog restart test
 
 ## Phase 5 — SQL front end (design/05, internal/07)
 
@@ -197,3 +197,26 @@
 - (phase 3) Consistent global lock order (row X before frame write lock; never hold a frame lock across a row-lock wait) — the STM lock manager cannot see frame-lock cycles so the detector would miss them and threads would hang.
 - (phase 3) SqlError is a proper Exception (deriving Show): test harnesses can `catch` with (\(e :: SqlError) -> ...) and compare seState to a Text literal under OverloadedStrings.
 - (phase 3) Redo/undo guard soundness: undo stamps the SAME lsn as the undone record + monotonic max() keeps the page watermark above older records, which is exactly what makes redo replay and double recovery idempotent (the txn-tests recovery section asserts it).
+
+## Deviations & implementation notes (phase 4 additions)
+
+- (phase 4) のINDEX redo/undo は NOT logical: every index mutation logs PPageUndo(page のbefore-image) + PPageImage(after-image) and Wal.Apply treats INDEX_INSERT/INDEX_DELETE as no-op markers (physiological replay; design/04 §4.5 requires before-image restoration, which entry-level undo cannot express for splits). New WT_PAGE_UNDO tag (=13) in Wal.Format.
+- (phase 4) のsplits REBUILD the whole page from decoded entries (buildSlottedImage) instead of surgical slot edits — simpler and consistent with the physiological replay above; recorded in the module header.
+- (phase 4) のdescend rule is STRICT (last sep STRICTLY < key) + chain-follow while page-empty or max <= key: design/04 §4.3 says sep = min key of child with <= descend, but duplicate copies of a separator can sit on BOTH sides after a split; strict+chain is the rule that finds every duplicate in both directions. Leaf splits prefer a key-change boundary.
+- (phase 4) のbtreeInsert/btreeDelete thread the CURRENT ROOT explicitly and btreeInsert RETURNS the possibly-new root (docs' btreeInsert returns (); internal/05 §5.2's IndexHandle made real) — a later op in the same txn must not descend a stale root after an earlier root split. relroot publication is Bootstrap.updateIndexRoot (WAL-logged heapUpdate of the class row).
+- (phase 4) のDDL takes lock-table X (not LIx) on the NEW relid, and CREATE INDEX also takes X on the OWNING TABLE (design/03 §3.2 "DDL takes X; DDL/DML exclude"; index WRITERS likewise take X on the index relid — closes the window where a later txn descends a root that a committed split already invalidated).
+- (phase 4) のCREATE INDEX bulk build logs PAllocPage+PPageImage per page but NO per-entry INDEX_INSERT markers (physiological replay makes them pure bloat); an aborted CREATE INDEX leaves orphan index pages (harmless; catalog rows are undone via their heap INSERT_TUPLE records).
+- (phase 4) のCREATE TABLE allocates the relation's FIRST heap page at DDL time (relpages_head never 0); heapAllocPage chains further pages via phNext + PPageImage, loadCatalog re-walks the chain. stageAllocPage (cache rdPages growth during INSERT) stays executor-facing (Phase 6), so in-session rdPages lists are head-only until reload.
+- (phase 4) のrelindex_column stores ordinal+1 (0 = "not an index") — design/06 §6.3's 0-based ordinal collides with a genuine column-0 index.
+- (phase 4) のbootstrap writes page 0 + the two catalog heaps OUTSIDE any transaction (db not open yet), then bootstrapCheckpoint so recovery starts past it; relids 1/2 fixed; DDL relid counter bump = PPageUndo+PPageImage pair on page 0.
+- (phase 4) のdesign/04 §4.3 pd_special (level) / pd_flags root-marker fields are NOT implemented — PKIndexLeaf/PKIndexInternal page kinds are the only discriminator.
+- (phase 4) のper-index MVar latch (internal/05 §5.2) is created ATOMICALLY inside one modifyMVar of the latch map (the first cut's readMVar+modifyMVar_ race handed two callers distinct latches).
+- (phase 4) のloadCatalog rebuilds rdColumns from hask_attribute rows and index key types from a pure column map (the first pass's enriched descs, not the raw class rows — the class row itself carries no column list).
+
+## Learned content (phase 4 additions)
+
+- (phase 4) のa findEntry/duplicate probe must run on the DESCENDED LEAF, never on the root — after any root split the root is an internal page and leaf-entry decoders throw "corrupt leaf entry" on internal payloads.
+- (phase 4) のrange/chain walks continue while the page is EMPTY or its max key is still below hi (hi=Nothing never stops); a "stop when max >= hi" formulation that treats empty pages as stoppers silently truncates scans after deletes (BTree.hs walk rule mirrors chainPast).
+- (phase 4) のtest ground truth must dedup its page list (nub) once CREATE TABLE pre-allocates its head page — scanning the head twice (catalog list + RID-derived list) double-counts rows.
+- (phase 4) のa test that deletes INDEX entries only must compare against heap-minus-deleted: the heap rows stay, so plain heap ground truth breaks after the delete phase; run the crash/recovery check BEFORE the delete phase so replay of the fill is verified.
+- (phase 4) のpage 0's counter field decode failure must not default to relid 0 (the no-owner sentinel): decode errors throw XX000 (corrupt-data rule design/01 §1.9).

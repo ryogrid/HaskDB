@@ -23,6 +23,7 @@ touchesPage p = case p of
   PDeleteTuple pg _ _   -> Just pg
   PUpdateTuple pg _ _ _ -> Just pg
   PPageImage pg _       -> Just pg
+  PPageUndo pg _        -> Just pg
   PAllocPage pg _       -> Just pg
   PIndexInsert{}  -> Nothing
   PIndexDelete{}  -> Nothing
@@ -76,8 +77,16 @@ applyRedo env rec lsn = case wrPayload rec of
       case decodeHeader bs of
         Left _  -> initPage pr PKHeap (cfgPageSize (envConfig env))
         Right _ -> pure ()
-  PIndexInsert{} -> pure ()   -- Phase 5: entry-level redo (stub now)
-  PIndexDelete{} -> pure ()
+  PIndexInsert{} -> pure ()   -- logical index records are replayed
+  PIndexDelete{} -> pure ()   -- PHYSIOLOGICALLY: every index page
+                               -- mutation also logs PPageImage (after) +
+                               -- PPageUndo (before), and redo/undo of the
+                               -- images is the authoritative replay.  The
+                               -- INDEX_* records stay in the WAL stream as
+                               -- the semantic markers of design/04 §4.5.
+                               -- (deviation: docs' logical redo/undo
+                               -- re-descend; ours is image-based, TODO log)
+  PPageUndo{}    -> pure ()   -- undo-only images: redo never applies
   PCreateTable{} -> pure ()   -- Phase 4: catalog rows (stub now)
   PCreateIndex{} -> pure ()
   PCommit        -> pure ()
@@ -112,10 +121,11 @@ applyUndo env rec lsn = case wrPayload rec of
         cur <- pageSlice pr off len
         when (cur == af) $ pageSetTuple pr lsn n bf
       Nothing -> pure ()
-  PPageImage{}   -> pure ()
-  PAllocPage{}   -> pure ()
+  PPageImage{}   -> pure ()   -- undo never installs after-images (§3.7)
+  PPageUndo pg img -> withPageDirty bp pg $ \pr -> installPageImage pr img lsn
+  PAllocPage{}   -> pure ()   -- allocated pages are never reclaimed
   PIndexInsert{} -> pure ()
-  PIndexDelete{} -> pure ()
+  PIndexDelete{} -> pure ()   -- see applyRedo note: image-based replay
   PCreateTable{} -> pure ()
   PCreateIndex{} -> pure ()
   PCommit        -> pure ()

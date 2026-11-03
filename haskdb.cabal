@@ -29,6 +29,9 @@ library
                     , HaskDB.Server.Env
                     , HaskDB.Wal.Apply
                     , HaskDB.Catalog.Types
+                    , HaskDB.Catalog.Cache
+                    , HaskDB.Catalog.Bootstrap
+                    , HaskDB.Index.BTree
                     , HaskDB.Txn.LockManager
                     , HaskDB.Txn.Manager
                     , HaskDB.Txn.Deadlock
@@ -60,6 +63,15 @@ test-suite wal-tests
     default-extensions: OverloadedStrings
     main-is:            WalSpec.hs
     build-depends:      base, bytestring, containers, binary, array, text, mtl, unix, directory, filepath, haskdb
+    hs-source-dirs:     test
+    ghc-options:        -Wall -optl-L/home/ryo/.local/lib
+
+test-suite index-tests
+    type:               exitcode-stdio-1.0
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+    main-is:            IndexSpec.hs
+    build-depends:      base, bytestring, containers, binary, array, text, mtl, stm, ghc-internal, unix, directory, filepath, haskdb
     hs-source-dirs:     test
     ghc-options:        -Wall -optl-L/home/ryo/.local/lib
 

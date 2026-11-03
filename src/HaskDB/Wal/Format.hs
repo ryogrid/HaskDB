@@ -27,6 +27,7 @@ data WalRecType
   | WTPageImage   | WTAllocPage
   | WTCreateTable | WTCreateIndex
   | WTCommit      | WTabort       | WTCheckpoint
+  | WTPageUndo
   deriving (Eq, Show)
 
 recTag :: WalRecType -> Word8
@@ -42,6 +43,7 @@ recTag WTCreateIndex = 9
 recTag WTCommit      = 10
 recTag WTabort       = 11
 recTag WTCheckpoint  = 12
+recTag WTPageUndo    = 13
 
 tagRec :: Word8 -> Maybe WalRecType
 tagRec t = go t
@@ -58,6 +60,7 @@ tagRec t = go t
     go 10 = Just WTCommit
     go 11 = Just WTabort
     go 12 = Just WTCheckpoint
+    go 13 = Just WTPageUndo
     go _  = Nothing
 
 data WalRecord = WalRecord
@@ -75,6 +78,7 @@ data WalPayload
   | PIndexDelete  RelId Value RID
   | PPageImage    PageId BS.ByteString
   | PAllocPage    PageId RelId
+  | PPageUndo     PageId BS.ByteString
   | PCreateTable  RelId Text [ColumnDesc]
   | PCreateIndex  RelId Text RelId Int PageId
   | PCommit
@@ -93,6 +97,7 @@ walRecType p = case p of
   PIndexDelete{} -> WTIndexDelete
   PPageImage{}   -> WTPageImage
   PAllocPage{}   -> WTAllocPage
+  PPageUndo{}    -> WTPageUndo
   PCreateTable{} -> WTCreateTable
   PCreateIndex{} -> WTCreateIndex
   PCommit        -> WTCommit
@@ -228,6 +233,7 @@ payloadBuilder p = case p of
   PIndexDelete ix kv rid'
     -> putRelId ix <> putBlob (encodeValue kv) <> putRid rid'
   PPageImage pg img    -> putPage pg <> putBlob img
+  PPageUndo pg img     -> putPage pg <> putBlob img
   PAllocPage pg rel    -> putPage pg <> putRelId rel
   PCreateTable rel nm cols ->
     putRelId rel <> putTextU16 nm <> putCount (length cols) <> mconcat (map putColDesc cols)
@@ -331,6 +337,9 @@ payloadReaderFor ty = case ty of
   WTPageImage -> do
     pg <- getW32le; img <- decodeBlob
     pure (PPageImage (fromIntegral pg) img)
+  WTPageUndo -> do
+    pg <- getW32le; img <- decodeBlob
+    pure (PPageUndo (fromIntegral pg) img)
   WTAllocPage -> do
     pg <- getW32le; rel <- decodeRelId
     pure (PAllocPage (fromIntegral pg) rel)

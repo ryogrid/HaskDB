@@ -4,7 +4,7 @@
 module HaskDB.Storage.Page where
 
 import qualified Data.ByteString as BS
-import Data.IORef (IORef, readIORef, writeIORef)
+import Data.IORef (IORef, readIORef, writeIORef, newIORef)
 import Data.Word
 import Data.List (sortOn)
 import HaskDB.Common.Types
@@ -342,6 +342,25 @@ pageSetTuple pr lsn n bytes = do
             then pageCompactReplace pr' lsn n bytes h sz'
             else throwSql "XX000"
                    "pageSetTuple: restore/redo image does not fit page"
+
+-- | Assemble a fresh slotted page image on a scratch buffer (used by
+--   bootstrap page init and by index page rebuilds): Nothing = the rows
+--   do not fit (split/compaction decisions are made with this fit test).
+buildSlottedImage :: Int -> PageKind -> PageId -> LSN
+                  -> [BS.ByteString] -> IO (Maybe BS.ByteString)
+buildSlottedImage ps k nxt lsn rows = do
+  let need = headerSize + sum [ itemSize + BS.length b | b <- rows ]
+  if need > ps then pure Nothing else do
+    r <- newIORef (BS.replicate ps 0)
+    let pr = PageRef r
+    initPage pr k ps
+    if nxt /= 0
+      then do
+        hdr <- readHeader pr
+        writeHeader pr hdr { phNext = nxt }
+      else pure ()
+    mapM_ (pageInsertTuple pr lsn) rows
+    Just <$> readIORef r
 
 -- Whole-image replacement (splits/compaction scratch-copy pattern).
 -- The image already carries its header; we re-stamp the LSN so the
