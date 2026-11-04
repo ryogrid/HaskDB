@@ -240,8 +240,11 @@ Semantics:
 - COPY statement + COPY wire messages (design/09's message table has none) and
   the `copy … from stdin with (…)` option accepted-and-ignored;
 - `\N` in COPY text rows → the column type's zero value (dialect has no NULL);
-- COPY failure code `20F03` (PostgreSQL's `COPY IN` error code) — design/09 §9.6
-  table has no COPY row;
+- COPY failure code `22P04` (PostgreSQL's ERRCODE_BAD_COPY_FILE_FORMAT): errcodes.txt
+  has NO `20F*` code at all, so the earlier `20F03` claim was a draft error;
+  design/09 §9.6's table has no COPY row either, so the code and the COPY dialect
+  extensions (arity error = 22P04, `\N` = the column type's zero value) are logged
+  as our choices;
 - psql binary lives at `/home/ryo/work/goopg/goopg/postgres/local_install/bin`
   (the checkpoint's `/home/ryo/goopg/...` path does not exist);
 - pgbench integration: our own table setup + `-f` scripts, not pgbench's `-i`
