@@ -401,6 +401,17 @@ featureTests = concat
   , parseErr "F1 CASE in select list"  "0A000" "select case id from users"
   , parseErr "F1 ON is reserved"       "42601" "select on from users"
   , parseErr "F1 unsupported type name" "0A000" "create table t14 (v timestamp)"
+  -- §0.3's "not supported" items the keyword blocklist cannot see: arithmetic
+  -- (not in the grammar at all => a syntax error) and the exact DDL shapes.
+  -- Added in the Phase-8 conformance pass so every §0.3 row has a test.
+  , parseErr "F1 arithmetic in the select list" "42601" "select id + 1 from users"
+  , parseErr "F1 arithmetic in WHERE" "42601" "select id from users where id + 1 = 2"
+  , parseErr "F1 arithmetic in UPDATE SET" "42601" "update users set id = id + 1"
+  , parseErr "F1 arithmetic in INSERT VALUES" "42601" "insert into users values (1 + 2, 3)"
+  , parseErr "F1 arithmetic in GROUP BY" "42601" "select count(id) from users group by id + 1"
+  , parseErr "F1 DROP INDEX" "0A000" "drop index users_id"
+  , parseErr "F1 no CREATE DATABASE" "42601" "create database db1"
+  , parseErr "F1 arithmetic in ORDER BY" "42601" "select id from users order by id + 1"
   ]
 
 -- ---------------------------------------------------------------------------

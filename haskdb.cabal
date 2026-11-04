@@ -134,6 +134,16 @@ test-suite session-tests
     hs-source-dirs:     test
     ghc-options:        -Wall -optl-L/home/ryo/.local/lib
 
+-- | Phase-8 crash matrix on doctored disk states (design/10 §10.2).
+test-suite crash-tests
+    type:               exitcode-stdio-1.0
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+    main-is:            CrashSpec.hs
+    build-depends:      base, bytestring, containers, binary, array, text, mtl, unix, directory, filepath, haskdb
+    hs-source-dirs:     test
+    ghc-options:        -Wall -optl-L/home/ryo/.local/lib
+
 test-suite exec-tests
     type:               exitcode-stdio-1.0
     default-language:   GHC2021

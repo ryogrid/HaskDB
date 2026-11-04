@@ -18,7 +18,7 @@ import Data.IORef (IORef, readIORef, modifyIORef')
 
 import HaskDB.Common.Types (Value(..), SqlType(..), RelId, RID(..), PageId)
 import HaskDB.Common.Error (SqlError(..), errMemoryLimit, throwSql)
-import HaskDB.Catalog.Types (IndexDesc(..))
+import HaskDB.Catalog.Types (IndexDesc(..), RelationDesc(..))
 import HaskDB.Catalog.Cache (CatalogCache)
 import HaskDB.Sql.Ast (AggFn(..), CreateTableStmt(..), CreateIndexStmt(..))
 import HaskDB.Server.Env (Env(..))
@@ -155,11 +155,19 @@ data SubqueryResult
 --   from the catalog each time made a later chunk descend the pre-split root
 --   (the staged root only lands in the catalog at COMMIT), which left the
 --   rows inserted after a split unreachable through the index.
+-- ecTargets is the SIBLING deviation for the heap side of the same problem:
+--   internal/06 §6.3's "the Modify operator keeps a local IORef RelationDesc
+--   for its target table" (so a statement that allocates several heap pages
+--   chains each one from the previous, per internal/01 §1.8 step 3) — it has
+--   to live in the ExecCtx, not in runInsert, because one COPY IN statement
+--   calls runInsert once per CopyData chunk and the catalog's rdPages stay
+--   frozen until COMMIT.
 data ExecCtx = ExecCtx { ecEnv :: Env, ecTxn :: TxnCtx
                        , ecCatalog :: CatalogCache
                        , ecSubq :: Map SubqueryId SubqueryResult
                        , ecMem :: MemBudget
-                       , ecRoots :: IORef (Map RelId PageId) }
+                       , ecRoots :: IORef (Map RelId PageId)
+                       , ecTargets :: IORef (Map RelId (IORef RelationDesc)) }
 -- deviation: ecCatalog added (btreeSearch / index maintenance / relation
 --   descs need the catalog handle inside operators; docs pass only Env).
 

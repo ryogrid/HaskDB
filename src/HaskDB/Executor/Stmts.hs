@@ -50,8 +50,10 @@ newExecCtx :: Env -> CatalogCache -> TxnCtx -> IO ExecCtx
 newExecCtx env cache ctx = do
   mem <- newMemBudget (envConfig env)
   rts <- newIORef M.empty
+  tgs <- newIORef M.empty
   pure ExecCtx { ecEnv = env, ecTxn = ctx, ecCatalog = cache
-               , ecSubq = M.empty, ecMem = mem, ecRoots = rts }
+               , ecSubq = M.empty, ecMem = mem, ecRoots = rts
+               , ecTargets = tgs }
 
 -- | Preamble: execute every subquery of the plan (bottom-up) and remember
 --   its result.  Scalar subqueries are limited to one row here; zero rows

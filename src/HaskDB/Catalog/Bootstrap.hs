@@ -20,18 +20,18 @@ module HaskDB.Catalog.Bootstrap where
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.IO (openFile, hClose, IOMode(ReadMode))
 import System.FilePath ((</>))
-import Control.Monad (forM_, when)
+import Control.Monad (when)
 import qualified Data.ByteString as BS
 import Data.List (sortBy)
 import Data.IORef (newIORef, readIORef)
 import Data.Text (Text, pack)
 import Data.Word
-import HaskDB.Common.Types (PageId, RelId, RID(..), Value, compareSql)
+import HaskDB.Common.Types (PageId, RelId, RID(..), Tuple, Value, compareSql)
 import HaskDB.Common.Config (Config, cfgDataDir, cfgPageSize, cfgBufferFrames)
 import HaskDB.Common.Error (throwSql)
 import HaskDB.Server.Env (Env, envBufferPool, envConfig, envControl, envFileMgr, envFreeSpace, newEnv)
 import HaskDB.Server.Control (ControlFile(..), writeControl)
-import HaskDB.Storage.FileManager (openDataFile, extendFile, writePageBytes, readPageBytes)
+import HaskDB.Storage.FileManager (openDataFile, extendFile, writePageBytes)
 import HaskDB.Storage.BufferPool (newBufferPool, withPageDirty, pinNewPage, unpinPage, ppPage)
 import GHC.Internal.Conc.Sync (readTVarIO)
 import HaskDB.Wal.Manager (newWalManager, flushWalUpTo)
@@ -41,8 +41,8 @@ import HaskDB.Catalog.Types (classCols, attrCols, classRelId, attrRelId,
   classFirstPage, attrFirstPage, page0PayloadOff, page0NextRelOff, page0Magic,
   classTupleOf, attrTupleOf, RelationDesc(..), IndexDesc(..), RelKind(RelTable))
 import HaskDB.Catalog.Cache (CatalogCache, loadCatalog, lookupById, lookupByName, classRowOf,
-  stageCreateTable, stageCreateIndex, stageClassRow, stageSetRoot, descOfIndex)
-import HaskDB.Heap.Heap (heapInsert, heapUpdate, heapScan)
+  stageCreateTable, stageCreateIndex, stageClassRow, stageSetRoot, stageAllocPage, descOfIndex)
+import HaskDB.Heap.Heap (heapInsertDesc, heapUpdate, heapScan)
 import HaskDB.Heap.TupleCodec (ColumnDesc(..), encodeTuple)
 import HaskDB.Storage.Page (PageRef(..), PageKind(PKCatalog, PKHeap), initPage,
   pageSplice, pageSlice, installPageImage, buildSlottedImage, readHeader,
@@ -204,6 +204,34 @@ allocRelId env ctx = withPageDirty (envBufferPool env) 0 $ \pr -> do
   installPageImage pr new li
   pure next
 
+-- | One catalog-heap row INSERT with the DESCRIPTOR THREADED to the caller
+--   (internal/06 §6.3's "heapInsert returns the updated descriptor to its
+--   caller" rule — the same contract Executor.Operators.runInsert follows
+--   through ecTargets), and with the newly allocated catalog page BOOKED in
+--   the relation's page list (stageAllocPage, staged for COMMIT).  Both halves
+--   are load-bearing: a DDL storm eventually allocates a second hask_class /
+--   hask_attribute heap page, and a frozen descriptor would (a) chain it from
+--   an OLDER page, rewriting a committed predecessor's phNext and orphaning a
+--   page of catalog rows, and (b) never list it after reopen.  Either breaks
+--   design/00 §0.7's live-vs-durable agreement.
+insertCatalogTuple :: Env -> CatalogCache -> TxnCtx -> RelId
+                   -> RelationDesc -> Tuple -> IO (RID, RelationDesc)
+insertCatalogTuple env cache ctx rel desc tup = do
+  (rowRid, desc') <- heapInsertDesc env ctx desc tup
+  mapM_ (\p -> stageAllocPage cache ctx rel p)
+        [ p | p <- rdPages desc', p `notElem` rdPages desc ]
+  pure (rowRid, desc')
+
+-- | Thread the descriptor across a whole batch (one CREATE TABLE writes
+--   several hask_attribute rows, so each row must see the pages its
+--   predecessors allocated).
+insertCatalogTuples :: Env -> CatalogCache -> TxnCtx -> RelId
+                    -> RelationDesc -> [Tuple] -> IO RelationDesc
+insertCatalogTuples _ _ _ _ desc [] = pure desc
+insertCatalogTuples env cache ctx rel desc (t : ts) = do
+  (_, desc') <- insertCatalogTuple env cache ctx rel desc t
+  insertCatalogTuples env cache ctx rel desc' ts
+
 -- | Write the relation's hask_class row through the heap layer (WAL-logged
 --   INSERT_TUPLE) and stage its RID for later counter/root updates.
 insertClassRow :: Env -> CatalogCache -> TxnCtx -> RelationDesc -> IO ()
@@ -212,7 +240,8 @@ insertClassRow env cache ctx rd = do
   case mcls of
     Nothing -> throwSql "XX000" "catalog: hask_class relation missing"
     Just cls -> do
-      rowRid <- heapInsert env ctx cls (classTupleOf rd)
+      (rowRid, _) <- insertCatalogTuple env cache ctx classRelId cls
+                                             (classTupleOf rd)
       stageClassRow cache ctx (rdId rd) rowRid
 
 -- | Write the relation's hask_attribute rows (WAL-logged).
@@ -221,8 +250,10 @@ insertAttrRows env cache ctx rd = do
   mattr <- lookupById cache attrRelId
   case mattr of
     Nothing -> throwSql "XX000" "catalog: hask_attribute relation missing"
-    Just attrs -> forM_ (attrTupleOf (rdId rd) (rdColumns rd))
-      (\t -> heapInsert env ctx attrs t >> pure ())
+    Just attrs -> do
+      _ <- insertCatalogTuples env cache ctx attrRelId attrs
+                               (attrTupleOf (rdId rd) (rdColumns rd))
+      pure ()
 
 -- | CREATE TABLE allocates the relation's FIRST heap page immediately
 --   (internal/06 §6.3 "INSERT ... allocates + relpages_head" collapsed at

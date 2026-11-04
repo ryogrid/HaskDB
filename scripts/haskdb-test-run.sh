@@ -34,8 +34,13 @@
 #     /sys/fs/cgroup/user.slice/user-<uid>.slice (no cpu.utilization files).
 #   * a per-process `ulimit -t` CPU-seconds guard and `nice`: a hang dies
 #     instead of spinning, and a busy box is yielded to.
-#   * accounting: the slice reports CPUUsageNSec/MemoryPeak, which is how the
-#     20 % budget of AGENT.md rule R-RES is VERIFIED rather than assumed.
+#   * accounting: the slice reports CPUUsageNSec/MemoryPeak.  This wrapper
+#     cannot print a delta itself — the final `exec systemd-run` replaces the
+#     script — so it prints the caps it applied, and the harnesses that read
+#     the slice back before and after the run (`scripts/psql-smoke.sh`,
+#     `scripts/pgbench-smoke.sh`, `scripts/crash-smoke.sh`, which each end with
+#     `budget check:` lines) are what VERIFY the 20 % budget of AGENT.md rule
+#     R-RES rather than assume it.
 #
 # Usage:
 #   scripts/haskdb-test-run.sh <command> [args...]
@@ -119,7 +124,7 @@ OOM_ADJ="${HASKDB_OOM_SCORE_ADJ-400}"
 # A unit name must not collide with a live scope.  Generate one when the caller
 # did not supply it: $$ (shell pid) plus $RANDOM keeps concurrent runs apart.
 if [ -z "$CG_UNIT" ]; then
-    CG_UNIT="haskdb-run-${$$}-${RANDOM:-0}"
+    CG_UNIT="haskdb-run-$$-${RANDOM:-0}"
 fi
 
 # Only digits may reach a [ -lt ] comparison, so a unit-suffixed cap token can

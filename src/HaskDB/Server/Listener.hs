@@ -115,6 +115,7 @@ openFlow cfg dir lock = do
       --   control file that disagrees with the data file's page-0 echo is
       --   rejected without first writing wrongly-aligned page images.
       checkPage0 cfg ctl
+      logServer "open: guards passed, replaying the pending WAL (§3.6)"
       env <- recoverDatabase cfg                     -- §3.6 replay
       loadCatalog env cache                          -- §6.3 catalog rebuild
       assemble env cache (cfNextTid ctl) lock

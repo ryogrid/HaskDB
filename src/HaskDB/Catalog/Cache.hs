@@ -9,7 +9,6 @@
 module HaskDB.Catalog.Cache where
 
 import qualified Data.Map.Strict as Map
-import Data.Map.Strict (Map)
 import Control.Monad (forM_, when)
 import Data.List (sortOn)
 import Control.Monad.STM (atomically)
@@ -130,11 +129,18 @@ indexDescOfRel rd
                      , ixRoot = rdRoot rd }
   | otherwise = Nothing
 
+-- | Append one heap page to a relation's page list, staged (applied at COMMIT
+--   only, internal/06 §6.3).  IDempotent: one COPY/INSERT statement may stage
+--   the same page several times (its chunks each walk the chain against the
+--   frozen pre-txn page list), and listing a page twice would scan its tuples
+--   twice — a live-vs-durable count mismatch, i.e. a design/00 §0.7 violation.
 stageAllocPage :: CatalogCache -> TxnCtx -> RelId -> PageId -> IO ()
 stageAllocPage cc ctx rid pg = stageAppend ctx $ atomically $ do
   st <- readTVar (ccState cc)
   writeTVar (ccState cc)
-    st { csById = Map.adjust (\rd -> rd { rdPages = rdPages rd ++ [pg] })
+    st { csById = Map.adjust (\rd -> if pg `elem` rdPages rd
+                                        then rd
+                                        else rd { rdPages = rdPages rd ++ [pg] })
                   rid (csById st) }
   v <- readTVar (ccVersion cc)
   writeTVar (ccVersion cc) (v + 1)
@@ -263,7 +269,7 @@ loadCatalog env cache = do
         [ (rid, [ ColumnDesc nm ty | (_, nm, ty) <- sortOn (\(n, _, _) -> n)
                               [ a | (r, a) <- attrsQ, r == rid ] ])
         | (rid, (rd0, _)) <- base, rdKind rd0 == RelTable ]
-  forM_ base $ \(rid, (rd0, rowRid)) ->
+  forM_ base $ \(_, (rd0, rowRid)) ->
     when (rdKind rd0 == RelIndex) $ do
       let kt = case [ colType (cols !! ci)
                      | tCols <- [Map.lookup (rdOwner rd0) tblColsMap]
@@ -278,8 +284,8 @@ loadCatalog env cache = do
         Nothing -> throwSql "XX000"
           "catalog: index column type unresolvable (owner table missing)"
   where
-    expandPages env rd = case rdPages rd of
-      (p : _) -> followChain env p
+    expandPages ev rd = case rdPages rd of
+      (p : _) -> followChain ev p
       []      -> pure []
     i64 n t = case drop n t of
       (VInt x : _) -> x

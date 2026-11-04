@@ -15,6 +15,11 @@
 --     (the scratch-copy pattern of §1.4, TODO.md log),
 --   * update-grow replays deterministically via the UPDATE_TUPLE record
 --     (no extra image; §3.4 guards = phLsn + content), TODO.md note.
+--   * the chain predecessor of a new heap page is the DESCRIPTOR's last page
+--     (internal/01 §1.8 step 3), never a phNext walk done by this layer — the
+--     tail is threaded through the caller by heapInsertDesc, internal/06 §6.3's
+--     "heapInsert returns the updated descriptor to its caller" rule (TODO.md,
+--     phase 8: the walk broke design/00 §0.7's live-vs-reopened agreement).
 module HaskDB.Heap.Heap where
 
 import qualified Data.ByteString as BS
@@ -39,7 +44,8 @@ import HaskDB.Txn.LockManager (LockMode(LS, LX, LIx))
 import HaskDB.Wal.Format (WalPayload(PInsertTuple, PDeleteTuple, PUpdateTuple, PAllocPage, PPageImage))
 
 -- | New heap page: extend the file, WAL ALLOC_PAGE before first use,
---   init under pin, chain from the relation's current last page — the
+--   init under pin, and APPEND to the chain at the last page of the CALLER's
+--   descriptor (the tail is threaded by heapInsertDesc, internal/06 §6.3) — the
 --   predecessor's PAGE_IMAGE is built on a scratch copy, logged, THEN
 --   installed (WAL-before-mutation, design/02 §2.4; internal/01 §1.8 step 3).
 heapAllocPage :: Env -> TxnCtx -> RelationDesc -> IO PageId
@@ -177,6 +183,32 @@ heapInsert env ctx rel tup = do
         Just r  -> pure r
         Nothing -> throwSql "54000"
                      "tuple does not fit even a fresh page"
+
+-- | The threaded form of internal/01 §1.8 step 3's "…and update the in-memory
+--   RelationDesc page list" (internal/06 §6.3's "Special case — page
+--   allocation during INSERT": the executing statement also needs the new page
+--   in its OWN snapshot of rdPages, and "heapInsert returns the updated
+--   descriptor to its caller").  The descriptors the CALLER hands to
+--   §1.8/§6.3 are captured at statement start and the cache is frozen until
+--   COMMIT (internal/06 §6.3: stageAppend only records the closure), so a
+--   statement that allocates several pages must thread this one into the next
+--   heapInsert of the same statement (internal/06 §6.3: "the Modify operator
+--   keeps a local IORef RelationDesc for its target table") — see
+--   Executor.Operators.targetOf/runInsert.  The heap layer must NOT recover
+--   the tail by walking phNext itself: that lets one statement extend the
+--   relation's page CHAIN ahead of the page LIST it owns, and pages no
+--   committed page list ever held then become reachable from
+--   relpages_head after reopen, so the live view and the reopened view of the
+--   relation disagree — a design/00 §0.7 violation (the chain of design/01
+--   §1.4 is append-only RELATIVE TO that list).  It also pins one frame per
+--   relation page per allocation, which reshuffles CLOCK evictions and so the
+--   WAL-rule flush order (internal/02 §2.6).
+heapInsertDesc :: Env -> TxnCtx -> RelationDesc -> Tuple -> IO (RID, RelationDesc)
+heapInsertDesc env ctx rel tup = do
+  rid <- heapInsert env ctx rel tup
+  pure (rid, if ridPage rid `elem` rdPages rel
+              then rel
+              else rel { rdPages = rdPages rel ++ [ridPage rid] })
 
 -- | heapUpdate flow (internal/01 §1.8, same-RID/same-page rule of
 --   design/01 §1.5).  Grow beyond the slot = move-within-page via the

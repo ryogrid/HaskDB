@@ -12,6 +12,7 @@ exec-test-dir/
 index-test-dir/
 txn-test-dir/
 probe-dir/
+crash-test-*/
 # editor / harness artifacts, not project content
 .serena/
 opencode.json

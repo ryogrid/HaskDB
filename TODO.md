@@ -77,9 +77,9 @@
 
 ## Phase 8 — Hardening and conformance
 
-- [ ] T40. Crash-test matrix のextension (during checkpoint, during recovery, wrong PAGE_SIZE のrejection, control-file のversion のcheck)
-- [ ] T41. Conformance checklist のagainst design/00 §0.3 (supported のdemonstrated, unsupported のerrors cleanly)
-- [ ] T42. README のdocumentation pass
+- [x] T40. Crash-test matrix のextension のduring のcheckpoint, のduring のrecovery, のwrong PAGE_SIZE のrejection, のcontrol-file のversion のcheck — split のin two, because のthe のcheckpoint/control-write のwindow のcannot のbe のtimed のfrom のa のshell: の`scripts/crash-smoke.sh` のis のthe のPROCESS のmatrix （real のSIGKILL のof のa のreal のserver: のC1 のafter のa のcommit （the のrow の+ のits のindex のentry のsurvive), のC2 のwith のan のOPEN のBEGIN のblock （nothing のsurvives), のC3 のkilled のbefore のthe のport のis のup = のinterrupted のrecovery, のresumes のto のthe のsame のstate, のC4 のkilled のafter のa のCREATE のresponse （the のcommitted のtable のMUST のbe のback, a refusal is a FAIL), のC5 のdoctored のcontrol のpageSize, のC6 の`format=2`, のC7 のzeroed のpage の0 のmagic, のC8 のforeign-file のcreate のrefusal, のC9 のsecond のserver のrefused のby のthe のflock, C10 data/WAL with the control file deleted → the §11.2 `incomplete database directory` refusal, added by the review pass so that guard has a deterministic case); の`test/CrashSpec.hs` の（suite の`crash-tests`) のis のthe のBYTE-level のmatrix: のA のa のcheckpoint のthat のreached のthe のWAL の+ のflushAll の+ のdata のfsync のbut のdied のBEFORE の`writeControl` （the のcontrol のstill のnames のthe のPREVIOUS のcheckpoint, のand のthe のfresh のCHECKPOINT のrecord のlists のan のACTIVE のtxn — のexactly のthe のwindow のinternal/03 の§3.5's のcrash-equivalence のrule のexists のto のclose), のB のcheckpoint-boundary のequivalence （cp の= の0 のvs のcp の= のthe のcheckpoint のoffset → のsame のvisible のstate), のC のan のABORTED のtxn のwhose のpage のwas のstolen+flushed （redo のskips のby のthe のphLsn のguard, のundo のmust のstill のerase → のthe の"losers の= Running AND Aborted" のdeviation), のD のrecovery のidempotence （a のsecond のrecovery のappends のonly のa のcheckpoint), のE のthe のreopen のguards のrefuse （zeroed のpage の0, のdisagreeing のpageSize のecho, のdisagreeing のcontrol のpageSize)
+- [x] T41. Conformance checklist のagainst design/00 の§0.3 （supported のdemonstrated, のunsupported のerrors cleanly) → `notes/conformance-checklist.md`: one row per §0.3 bullet, のwith のthe のtest のcheck のname のthat のshows のit. のWhile のwriting のit, のfour §0.3 bullets のhad NO のtest のat のall （`DROP INDEX`, のarithmetic のrejection のper のclause, の"no CREATE DATABASE", の"multiple processes on the same files") — のclosed のby のeight のnew の`test/SqlSpec.hs` のF1 rows （`drop index` の→ の0A000, の`create database` の→ の42601, のarithmetic のin のSELECT のlist/WHERE/UPDATE のSET/INSERT のVALUES/GROUP のB/ORDER のBY の→ の42601) のand のby のcrash-smoke のC9 （the のreal のsecond-server のflock のrefusal)
+- [x] T42. README のdocumentation のpass: の`README.md` のrewritten （how のto のbuild （`cabal build all`, の`cabal test all`; のtest のexecutables のare のNOT のbuilt のby の`cabal build`), のhow のto のrun の`haskdb-server の<dir> の[--port] [--create]`, のthe のfour-file のon-disk のlayout, のthe のreopen/compatibility のguards, のthe のConfig のknobs （no のCLI のflags), のthe のwire-protocol のsubset, のthe のnine のsuites, のthe のthree のsmoke のscripts, のthe のR-RES のcapping のrule のand のits のaccounting のcommand, のthe のdocumentation のmap)
 
 ---
 
@@ -366,3 +366,154 @@
 - (p7) のthe の`time` のpackage のis のa のGHC のboot のlibrary （`getCurrentTime` のin の`Data.Time.Clock`） — のusable のfor の`logServer` のtimestamps のunder のthe のboot-only のrule; のthe のserver のis のbuilt のwith の`-rtsopts -threaded -with-rtsopts=-N2` （the のRTS の- のN2 のdefault のkeeps のthe のserver のinside のthe のCPU のbudget のwithout のan のexplicit の`+RTS`).
 - (p7) のshell のtraps のhit のagain: の`pkill -f haskdb-server` のkills のthe のharness （use の`pgrep -x haskdb-server` の+ の`kill -9 <pid>`）; の`P=x && rm … && exe … &` のbackgrounds のthe のWHOLE のchain; のlong のcompound のcommands のare のrejected の("Portable のshell のscanner のcannot のanalyze のcommand") — のsplit のthem; のnever のredirect のa のscript のinto のa のpath のthe のscript の`rm -rf`s.
 - (p7) のa のport のreused のwhile のa のlive のserver のholds のit のfails の`bind` （errno の-98 の"Address のalready のin のuse") — のalways のkill のleftover のservers のbefore のre-running のa のsmoke のtest （the のconfusing のsymptom のis のthe のclient のside の"server のclosed のthe のconnection").
+
+## Deviations & implementation notes (phase 8 additions)
+
+- design/10 の§10.2 のPhase-8 のbullet の"`kill -9` のduring のeach のphase's のoperations, のincluding のduring のcheckpoint のand during のrecovery のitself" は NOT のone のharness のbut のtwo: のprocess-level のSIGKILL のof のa のreal のserver （`scripts/crash-smoke.sh`） and のbyte-level のDOCTORED のdisk のstates （`test/CrashSpec.hs`）。 のThe のlatter のexists のbecause のthe のcrash のhas のto のland のinside の`runCheckpointWith` （between のthe のCHECKPOINT のappend の+ のflushAll の+ のdata のfsync のand の`writeControl`) — のa のwindow のof のmicroseconds のno のshell のcan のhit のdeterministically, のand のbecause の`cfgCheckpointSecs = 300` （D-11) のwith のno のCLI のflag, のa のshell のharness のcannot のeven のstart のa のcheckpoint のon のdemand.
+- design/10 の§10.2 のnever のnames のthe のindividual のcrash のcases; のthe のfive の`CrashSpec.hs` のcases のcome のfrom のdesign/02 の§2.6 （analysis/redo/undo, のthe のcheckpoint のtable) のand のfrom のalready-logged のimplementation のrules: のthe のcheckpoint-boundary のequivalence のis の`applyRedo`'s のphLsn のguard, のthe のaborted-then-stolen のundo のis のWal.Recovery's の"losers の= Running AND Aborted" のdeviation （no-force の+ のsteal, のdesign/02 の§2.4).
+- design/00 の§0.3 の"Arithmetic のexpressions … のis のrejected" のnames NO のSQLSTATE のand のinternal/07 の§7.3's の"specific のfeature のerror" は nicety のlists のonly のthe のblocklisted のkeywords （`JOIN/HAVING/LIMIT/NULL/IS/ALTER/DROP`） — のthe のdialect のhas のno のarithmetic のtokens のin のthe のgrammar のat のall, のso のevery のarithmetic のshape のis のrejected のas の42601 のsyntax のerror （"unexpected のcharacter: +"). のRecorded のas のa のdocs↔docs のgap, のNOT のchanged のto の0A000.
+- design/00 の§0.3 の"no CREATE DATABASE" は implementation のside のof のthe のsame のsentence: の`create` のis のreserved のand のmust のbe のfollowed のby の`table`/`index`, のso の`create database x` は 42601. のNo のnew のstatement のwas のadded.
+- design/10 の§10.2 のPhase-8 の"all のsuites のgreen … from のa のfresh のclone のwith のonly のGHC + boot libr[aries]" のholds のfor のthe のLIBRARY （9 のsuites のbuild のfrom のsource）; のthe のlink のlines のstill のneed の`-optl-L/home/ryo/.local/lib` のfor のthe のboot のlibs のbuilt のby のthis のhost のpackaging — のan のenvironment のfact, のalready のin の`haskdb.cabal`, のnot のa のdocs のconflict.
+- §11.2 の"incomplete database directory … no control file" のis のobservable のonly のwhen のbootstrap のdied のBEFORE のthe のcontrol のwrite; のcrash-smoke のC4 のis のtherefore のschedule-dependent のbut のthe のharness のPINS のthe のside （it のhits のthe のCREATE のresponse のBEFORE のthe のkill）, のso のC4 のnow のdemands のthe のcommitted のtable; のthe のreview のpass のmade のa のrefusal のa のFAIL のand のadded のthe のdeterministic のC10 （refused-with-the-die-message, のor のa のself-consistent のreopen のwhere のthe のCREATE のeither のcommitted のor のdid not). のsuperseded: のC10 のof のcrash-smoke.sh のnow のasserts のit のdeterministically のat のthe のPROCESS のlevel （data/WAL のwithout のcontrol → のthe のrefusal のmessage）， のand のno のCrashSpec のE-case のcovers のit
+
+## Learned content (phase 8 additions)
+
+- (p8) の`scripts/haskdb-test-run.sh` のgenerated のunit のname: の`"${$$}"` は a のbash の"bad のsubstitution" （`$$` のmust のstay のUNBRACED). のSo のany のcapped のrun のthat のdoes NOT のset の`HASKDB_CG_UNIT` のdied のimmediately; のfixed のto の`"haskdb-run-$$-$RANDOM"`.
+- (p8) のthe のbackgrounded の`"$RUN" … &` のjob のpid `$!` のIS のthe のserver のprocess: のthe のwrapper のchain のsystemd-run → `sh -c` → `nice` → server のis のall の`exec`, のso の`kill -9 "$!"` のreaches のthe のserver のand の`kill -TERM` のdrives のthe の§11.5 のgraceful のshutdown.
+- (p8) のbut のa のSIGKILLed のchild のof のa のstill-waiting のparent のremains のa のZOMBIE のwhose の`comm` のis のstill の`haskdb-server`, のand の`pgrep -x haskdb-server` のMATCHES のzombies — のthe の"no のserver のleft" のcheck のmust のuse の`ps -eo pid=,stat=,comm=` のand のcount のonly のnon-`Z` のrows.
+- (p8) の`start_srv` のRESETS の`SRVPORT`/`SRVPID`/`SRVLOG` のon のa のREFUSED のstart （it のclears のthem のat のentry）: のa のguard のcase のthat のlater の`shut`s のa のserver のmust のSAVE のthe のpid のbefore のcalling の`start_srv`, のsuperseded のin のthe のreview のpass: のthe のshipped の`start_srv` のsets の`SRVPORT`/`SRVPID`/`SRVLOG` のONLY のon のsuccess のand のnever のclears them, so the rule became: the `refused` helper SAVES-and-RESTORES them around the call (crash-smoke's comment says the same), and an unexpected rc=0 case kills the pid that call started so a broken guard cannot leak a flock across the rest of the matrix.
+- (p8) のthe のcrash のmatrix のneeds ONE のFRESH のDATABASE のDIRECTORY のper のcase: のthe のfirst のversion のput の`rm -rf "$dir"` のinside の`start_srv`, のwhich のsilently のdeleted のthe のSETUP のstate （the のsymptom のwas のpsql の"table のnot のfound: のacct" のand のevery のrow のcount のprinted のEMPTY, のwhich のmade のall のC1–C3 のassertions のvacuously の"equal").
+- (p8) の`dd` の`conv=seek=0` は INVALID （`seek` のis のa のtop-level のoperand, のnot のa のconv のtoken） — のthe のpage-0 のzeroing のsilently のdid のnothing のand のC7 の"passed" のby のaccident. のThe のright のform: の`dd if=/dev/zero of=F bs=64 count=1 seek=0 conv=notrunc` （keep のthe のfile のsize).
+- (p8) のpsql のfact のmissed のthe のfirst のtime: のSQL のneeds の`-c`; のa のbare のpositional のargument は a のFILE のto のread （so の`pq "$P" 'create table …'` のwithout の`-c` のcreated のa のfile のnamed のafter のthe のSQL). のAlready のdocumented のat のthe のtop のof の`scripts/psql-smoke.sh` — のread のthe のexisting のscripts のbefore のre-using のtheir のhelpers.
+- (p8) のthe の`?column?` のheader の+ のone のindented のnumber の+ の`(1 row)` のis のhow のa のHaskDB のcount のquery のprints; のthe のrow のnumber のis のgrabbed のwith の`grep -oE '^[[:space:]]*[0-9]+[[:space:]]*$'` （the のheader のand のthe `(1 row)` のline のdo NOT のmatch).
+- (p8) のdoctored-disk のcrash のtests のare のbuilt のat のBYTE のlevel: のWAL のrecords のvia の`appendRecord` （their のLSN のIS のthe のfile のoffset) の+ のgarbage のtail のvia の`BS.appendFile` の+ のa のSTALE のcontrol のfile （`cfCheckpointLSN` のpointing のat のthe のPREVIOUS のcheckpoint). のThen の`recoverDatabase` のmust のreach のthe のright のstate のusing のthe のCHECKPOINT のrecord のalone — のwhich のis のwhat のproves のinternal/03 の§3.5's のcrash-equivalence のrule.
+- (p8) のfor のthe の"stolen の+ のflushed のthen のaborted" のstate, のthe のpage のimage のmust のbe のstamped のwith のthe のRECORD's のown のLSN （write のthe のWAL のFIRST, のread のthe のoffset, のthen のbuild のthe のpage のwith の`pageSetTuple pr lb …`） — のotherwise のthe のredo のpass のre-applies のthe のchange のinstead のof のskipping のit, のand のthe のtest のproves のnothing.
+- (p8) のcrash のsuites のuse の`cfgPageSize = 512` の+ の`cfgBufferFrames = 16` （`cfgFor`） so のthe のdoctored のfiles のstay のtiny; のthe のdefault の8192/1024 のchanges のnothing のabout のthe のsemantics.
+- (p8) の`expectThrow` のpattern （the の§11.2/§11.4 のguards のare の`SqlError` のexceptions）: の`try act :: IO (Either SomeException ())` の+ の`fromException e :: Maybe SqlError` の+ の`isInfixOf (pack frag) (seMessage ex)` — の`fromException` のresolves のits のtype のfrom の`seMessage` のalone, のno のScopedTypeVariables のneeded.
+- (p8) のa のcrash のcase のis のNOT の"the のstate のafter のrecovery": のit のis の"the のstate のafter のrecovery のOF のA のDOCTORED のSTATE"; のso のeach のcase のbuilds のits のdirectory のfrom のscratch （`removeDirectoryRecursive` のfirst） and のnever のshares のone のdirectory のacross のcases （the のflock のand のthe のcheckpoint のoffsets のwould のotherwise のfeed のback のinto のeach のother).
+
+- (p8) のcrash のstate のmust のbe のBUILT のbefore のthe のkill のmeans のanything: のC3 のfirst のtried のCOPY の30000 のrows （one のCOPY の= one のtransaction, のso の30000 のpending のWAL のrecords のon のcrash） and のthe のSERVER のdied のmid-COPY （silent の`Killed`, のno のdie-message のin のthe のserver のlog） — のtwo のscope のcaps のwere のto blame: の`ulimit -t 600` のCPU-seconds のx のthe のserver's の`-with-rtsopts=-N2` のover のa の~5-min のCOPY （~10 のms のper のrow の= の~1200 のCPU-s の> の600), のthen のthe の1.2G の`MemoryMax` のOOM のkiller. のThe のfixed のC3 のuses のCOPY の5000 （~50 のs のwall, の~100 のCPU-s, のcomfortably のinside のthe のcaps) のAND のstill のreplays のslower のthan のthe の0.05-s のdoomed-reopen のwindow, のwhich のthe の`nohit ... 'listening on port'` のassertion のof のthe のkilled-boot のprocess のproves. のA のcrash-test のharness のmust のNEVER のconfuse "the のoperation のexceeded のthe のresource のcaps" のwith "the のoperation のwas のinterrupted のby のthe のcrash".
+- (p8) のthe のserver's の300-s のcheckpoint のtimer （`cfgCheckpointSecs = 300`, のD-11, のno のCLI のflag） のfires のDURING のlong のclient のoperations （the のlong のCOPY のrun のshowed のa の`checkpoint completed` のlog のline の~5 のmin のafter のboot） — i.e. のa のrunning のserver のreally のdoes のproduce のthe の"checkpoint のwith のan のACTIVE のtxn のin のits のtable" のdisk のstate; のthe のshell のcannot のtime のthe のcut のinside の`runCheckpointWith`, のwhich のis のwhy のthe のdeterministic のhalf のof のthat のrule のis のCrashSpec のcase のA.
+
+## Engine bugs found by the Phase-8 crash matrix (must-fix, fixed in this pass)
+
+- (p8) のbug のin の`Heap.Heap.heapAllocPage` （found のby のthe のcrash のmatrix, のNOT のby のa のunit のsuite）: one statement that allocates several heap pages (a COPY/INSERT past a page boundary, ~340 rows here) chained each new page from the CALLER's stale `rdPages` snapshot, so the predecessor's phNext was rewritten from an OLDER page and a whole page of committed tuples fell out of design/01 §1.5's chain — live count 980 of 1000 with rows 341..680 missing and 681..1000 listed twice, reopened count 660. That violates design/00 §0.7 (committed state must be reachable). Chain from the relation's TRUE last page is the right invariant, but the first attempt got it wrong twice over (see the p8-rc-N note below): the `lastHeapPage` phNext walk inside `Heap.Heap` is gone and the tail is threaded through the caller instead (`Heap.heapInsertDesc` + `Executor.Operators.targetOf`, internal/06 §6.3).
+- (p8) のsecond half of the same statement's bookkeeping, in `Catalog.Cache.stageAllocPage`: the catalog cache is FROZEN until commit (`stageAppend` only records the closure, internal/06 §6.3), so each COPY chunk walked the chain against the same pre-txn page list and staged the same page again → `rdPages` gained duplicate entries → a page's tuples were scanned twice (live 1660/6400/29600 for 1000/3000/8000 rows). Fix: `stageAllocPage` is now idempotent (a `pg elem rdPages` guard inside the `atomically` block), which is safe exactly because staged closures run only at COMMIT and aborts discard them (no cache undo exists to break).
+- (p8) lesson for the internal/06 §6.3 staging model: nothing READ during a transaction can see that transaction's own catalog updates; per-chunk or loop bookkeeping must be idempotent, or live in the executor (an IORef), never in a `RelationDesc` snapshot.
+- (p8) note: `internal/06` persists the relation's full `rdPages` list in the catalog row, so reopen restores the list (not a phNext walk); after the fix the live list, the reopened list and the counts agree exactly (1000/3000/8000/8003 in the repro, live == reopened).
+- (p8 rc-N) the `lastHeapPage` phNext walk in `Heap.Heap` was replaced, because the walk is not just
+  inefficient, it is the wrong place for that bookkeeping. Two independent things it broke:
+  * CONTENT: a walk grows the page CHAIN ahead of the relation's page LIST, and that list is frozen
+    until COMMIT (internal/06 §6.3, `stageAppend` only records the closure), so one statement's pages
+    became reachable from `relpages_head` after reopen while no committed list ever contained them:
+    the live view and the reopened view of ONE relation then disagree, which is exactly what design/00
+    §0.7 forbids (the chain of design/01 §1.4 is append-only RELATIVE TO that list, and
+    relpages_head + phNext is the restore path per design/01 §1.4, `relpages_head` being the only
+    page column in the class row of design/06 §6.3). Concretely in `test/IndexSpec.hs`, whose heap
+    ground truth is `heapScan` over `rdPages` plus the pages seen in index RIDs: with the walk the
+    reopened `person` chain reached all 14 heap pages (measured: `heapScan rel=3 pages=[3,5,9,12,15,18,21,23,28,31,34,37,41,43] rows=152`),
+    so `delete: key13 survivors == heap` demanded the 6 live key0013 rows that the delete txn had
+    legitimately removed from the index, and became unsatisfiable next to its own
+    `delete: key13 group fully deleted -> []` check. That check is the phase-4 milestone's expectation:
+    it only ever held because the 25 heap pages of that scenario were being orphaned, i.e. because of
+    the bug, not despite it.
+  * ORDER: the walk pins one frame per relation page per allocation, which reshuffles CLOCK victims
+    and therefore when `flushFrame`'s single WAL-rule choke point (internal/02 §2.6) fires; the
+    measured page `phLsn`s move (page 21: 228314 walked vs 225920 as-is, page 23: 264122 vs 261728).
+    No WAL/buffer-pool rule violation was found there, so the regression is the CONTENT one, not a
+    latent WAL bug: the B+-tree side is fine (measured, same run: the delete txn emptied every leaf of
+    the 25-leaf chain, `btreeRange` returned the surviving 2 entries, `btreeSearch` for key0000
+    descended root=27 to leaf=4 and hit it), so `descendToLeaf`/`chainPast` need no change.
+  * FIX: `heapAllocPage` chains from `reverse (rdPages rel)` again - internal/01 §1.8 step 3 verbatim
+    ("set previous last page's pd_next ... AND UPDATE THE IN-MEMORY RELATIONDESC PAGE LIST") - and the
+    page list is grown by the caller, which is internal/06 §6.3's "Special case - page allocation
+    during INSERT": "the executing statement also needs the new page in its own snapshot of rdPages",
+    "heapInsert returns the updated descriptor to its caller", "the Modify operator keeps a local
+    IORef RelationDesc for its target table". Implemented as `Heap.heapInsertDesc :: ... -> IO (RID,
+    RelationDesc)` plus `ExecCtx.ecTargets :: IORef (Map RelId (IORef RelationDesc))`, consumed by
+    `Executor.Operators.targetOf`/`runInsert`. That cell is needed because one COPY STATEMENT calls
+    `runInsert` once per CopyData chunk (Server.Session.copyIn) while the catalog page list is frozen
+    until COMMIT; a per-chunk descriptor reproduces the skip at every chunk boundary (measured: with
+    the threaded tail inside `runInsert` instead of inside the statement, the live count after a 5000-row
+    COPY was 340 = one heap page of 340 rows).
+  * deviations to carry: (a) internal/01 §1.8 keeps `heapInsert :: Env -> TxnCtx -> RelationDesc -> Tuple
+    -> IO RID` while internal/06 §6.3 says heapInsert returns the updated descriptor - a docs-vs-docs
+    divergence, resolved by keeping the RID-only storage-level entry point (DDL and the suites use it)
+    and adding `heapInsertDesc` as the executor-facing one; (b) §6.3's "local IORef RelationDesc" lives
+    in the `ExecCtx` (statement-scoped, like the sibling `ecRoots` deviation) instead of inside the
+    operator; (c) a caller that hands `heapInsert` a pre-statement descriptor snapshot and does not thread
+    the grown list is outside that documented contract, and its pages keep being invisible to `relpages_head`
+    after reopen - that is exactly what `test/IndexSpec.hs`'s `truthFrom` helper compensates for with
+    "every heap page seen in RIDs" (its own note, line 87-89); (d) `ExecCtx` grew one field, so
+    `newExecCtx`/`internal/09 §9.1`'s ExecCtx sketch is amended.
+  * verification of this pass: `cabal build all` 0 warnings, `cabal test all` 9/9 suites PASS (index-tests
+    all checks), `scripts/crash-smoke.sh` "the whole matrix held (0 failures)" (exit 0). The durability
+    invariant is checked at page level, not only by counts: in the C3 state (kill -9 before and during
+    reopen of a 5000-row COPY), `acct`'s chain is 3->5->9->11->14->16->19->22->24->27->29->32->34->37->40,
+    15 pages with 340 live tuples each and 243 in the tail = 5003 = live == reopened, no orphaned heap page.
+
+## Phase-8 design-review pass (the whole diff reviewed, MUST-FIX items closed)
+
+A subagent design review of the whole Phase-8 change set (semantics = design/,
+structure = internal-design/) reported 6 MUST-FIX + 3 SHOULD-FIX items. All
+were fixed in this pass; none required touching design/ or internal-design/:
+
+- MUST-FIX #1 (engine, real): `Catalog.Bootstrap.insertClassRow`/`insertAttrRows`
+  inserted the `hask_class`/`hask_attribute` rows through the NON-threaded
+  `heapInsert` with a descriptor read from the frozen cache, so a DDL storm
+  past one catalog heap page had the same chain-skipping (and never booked the
+  new catalog page after reopen). Latent: ~160 class rows per 8192-byte page,
+  so no suite reached it. Fix: `insertCatalogTuple`/`insertCatalogTuples` use
+  `heapInsertDesc` and `stageAllocPage` the pages that statement allocated —
+  the same internal/06 §6.3 contract `Executor.Operators.runInsert` follows.
+  Proof: 200 `create table` + `create index` + `insert` in one psql session
+  (`ddlstorm.sh`): the class chain is `1 -> 121`, the attribute chain
+  `2 -> 113`, and every late table/index/row survives a graceful shutdown +
+  reopen (t200 count 1, index probe 70, live == reopened).
+- MUST-FIX #2 (docs↔code): the checklist's engine-bug table claimed a
+  `lastHeapPage` fix that no longer exists in `src/` (the phNext walk was
+  rejected in favour of threading). Rewritten to record three stages: symptom,
+  the rejected walk (with the reason: the chain grew ahead of the frozen
+  page LIST, so reopen lost those pages, plus the eviction-order side effect),
+  and the fix that shipped.
+- MUST-FIX #3 (harness vacuity): the C7 "did the zeroing happen?" guard read
+  bytes 0..3 of the data file, but `page0Magic` lives at `page0PayloadOff` =
+  20, so it could never fire. Now reads bytes 20..23; and with the rc check
+  below, a non-zeroing dd would fail the case anyway.
+- MUST-FIX #4 (harness soundness): C4 accepted a §0.7 violation (a committed
+  CREATE whose response arrived, reported absent = "ok") and its else-branch
+  (`incomplete`) was dead — bootstrap prints `listening` only after writing
+  the control file, so that directory is COMPLETE. C4 now asserts the table is
+  present with count 0, and a refusal is a FAIL. The §11.2 `incomplete
+  database directory` refusal, asserted nowhere before, is a new deterministic
+  case C10 (data + WAL, control file deleted).
+- MUST-FIX #5 (vacuous assertion): `CrashSpec.hs` case C asserted `t2 ==
+  Nothing` for a slot that was never written. The aborted txn now inserts AND
+  updates a second slot (and both after-images are "stolen" to the data file),
+  so `t1 == Nothing && t2 == Nothing` distinguishes skipping the UPDATE undo
+  (would show TD/TE) from skipping the INSERT undo (would show TD2/TE2).
+- MUST-FIX #6 (docs↔code): README + the runner's header claimed the wrapper
+  prints the slice's accounting delta; it cannot (`exec systemd-run` replaces
+  it). Both now say the wrapper enforces/prints the caps and the three smoke
+  harnesses print the measured `budget check:` delta themselves.
+- SHOULD-FIX #1 (README): "the test executables are not built by `cabal build
+  all`" is toolchain-observed, not cabal-documented; restated as what this
+  Cabal 3.16.1.0 does (compiles lib + `exe:haskdb-server`) and what to use.
+- SHOULD-FIX #2 (harness): the guard cases ignored `start_srv`'s exit code, so
+  a `hit` could grep the PREVIOUS case's stale `SRVFAILLOG`. New `refused`
+  helper requires rc=2 and fails otherwise (and kills an unexpected live server
+  so a broken guard cannot leak a flock).
+- SHOULD-FIX #3 (harness): C3 claimed "the kill landed inside the replay" on
+  negative evidence alone. `Server.Listener.openFlow` now logs
+  `open: guards passed, replaying the pending WAL (§3.6)` before
+  `recoverDatabase`, and C3 asserts that marker PRESENT plus `listening on
+  port` ABSENT. Deviation to log: the log line is observability only — the
+  docs prescribe no such marker; it changes no rule.
+- Review items A–J otherwise OK: the Heap.hs header is accurate,
+  `conformance-checklist.md` citations all resolve, README claims match
+  `Config.hs`/`app/Main.hs`, the new SqlSpec F1 rows are 42601 per the grammar
+  (arithmetic absent; 0A000 reserved for the §7.3 blocklisted keywords), no
+  debug code left, `の` only in TODO.md.
+- (p8, review round 2 のdeviations) のdocs↔code: の`Server.Listener.openFlow` のnow のlogs の"open: guards passed, replaying the pending WAL (§3.6)" のbefore の`recoverDatabase`. のinternal/11 の§11.7 のenumerates のthe のlog のcontent （startup のbanner, のcheckpoint のcompletions, のXX000 のsession のerrors, のshutdown） のand のdoes のNOT のname のsuch のa のline — のan のobservability のaddition のthe のcrash のharness のneeds のto のpin のthe のkill のinside のthe のreplay; の§11.7 のsays の"client-visible のbehaviour のnever のdepends のon のlogs", のso のno のrule のis のchanged. のThe のcrash-smoke のand のchecklist のwording のnow のcite の§11.7 のfor のit, のnot の§3.6.
+- (p8, review round 2 のcorrections) のthe のproof のof のthe のcatalog-heap のchain のfix のcame のfrom のa のSCRATCH のharness （/tmp/opencode/ddlstorm.sh: 200 の`create table` の+ の1 の`create index` のin のone のpsql session, のthen のshutdown + reopen; のclass のchain の1 → 121, のattribute のchain の2 → 113, のevery のlate のtable の/ のindex の/ のrow のsurvives, のlive の== のreopened). のIt のis のNOT のcommitted のto の`scripts/` （the のrepo のkeeps のonly のthe のfour のcommitted のscripts） — reproduce のit のfrom のTODO のif のneeded.
+- (p8, review round 2 のresidual のnote) の`Bootstrap.insertCatalogTuple` のtakes のits のdescriptor のfrom のthe のFROZEN のcache のper のSTATEMENT, のlike のevery のother のstaged のop: のa のmulti-DDL のBEGIN…COMMIT のblock のthat のcrosses のa のhask_class のpage のboundary のinside のone のtransaction のwould のstill のchain-skip （the のsame の"second のstatement のsees のa のstale のpage のlist" のrule のalready のlogged のfor のthe のdata-relation のpath のin の`Executor.Operators` のand のTODO のp6). のNot のreachable のby のthe のSQL のfront のend （DDL のin のa のblock のis のone のstatement のper のrow のof のthe のparser のoutput, のand のno のsuite のdoes の200 のDDLs のin のone のblock）; のleft のas-is, のnot のsilently "fixed".

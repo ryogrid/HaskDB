@@ -30,6 +30,11 @@
 --   * heap pages newly allocated during INSERT are staged into the catalog
 --     relpages list by walking the heap chain after the fact (the heap layer
 --     logs the PAllocPage WAL record but never touches the cache, Phase-4);
+--     WITHIN a statement the descriptor handed to every heapInsert is threaded
+--     through the ecTargets cell so internal/01 §1.8 step 3 always chains a
+--     new page from the relation's TRUE last page (internal/06 §6.3's
+--     "the Modify operator keeps a local IORef RelationDesc" rule —
+--     targetOf/runInsert below; one COPY statement calls runInsert per chunk);
 --   * index roots are tracked in a per-operator cell and published with ONE
 --     'updateIndexRoot' call per index whose root changed (Phase-4 in-session
 --     cache staleness); `btreeDelete` returns no root so shrinking is not
@@ -65,7 +70,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Control.Monad (filterM, foldM, when, forM_, zipWithM)
 
-import HaskDB.Common.Types (Value(..), RID(RID), RelId, PageId, SqlType(..), encodeValue, compareSql)
+import HaskDB.Common.Types (Value(..), RID(..), RelId, PageId, SqlType(..), encodeValue, compareSql)
 import HaskDB.Common.Error (SqlError(..), throwSql, errUndefinedTable, errInternal, errAggEmptyInput, errIntOverflow)
 import HaskDB.Catalog.Types (RelationDesc(rdColumns, rdPages), IndexDesc(ixRelId, ixColumn, ixRoot))
 import HaskDB.Catalog.Cache (lookupById, lookupByName, indexesOf, stageTupleDelta, stageAllocPage)
@@ -73,7 +78,7 @@ import HaskDB.Catalog.Bootstrap (createTableDDL, createIndexDDL, updateIndexRoot
 import HaskDB.Heap.TupleCodec (ColumnDesc(..), decodeTuple)
 import HaskDB.Storage.BufferPool (withPage)
 import HaskDB.Storage.Page (readHeader, PageHeader(phNext), liveSlots, pageReadTuple)
-import HaskDB.Heap.Heap (heapInsert, heapUpdate, heapDelete, heapFetch)
+import HaskDB.Heap.Heap (heapInsertDesc, heapUpdate, heapDelete, heapFetch)
 import HaskDB.Index.BTree (btreeSearch, btreeRange, btreeInsert, btreeDelete)
 import HaskDB.Txn.Manager (lockRow)
 import HaskDB.Txn.LockManager (LockMode(LS, LX))
@@ -690,14 +695,34 @@ syncIndexRoots ec ixs refs = forM_ ixs $ \ix -> do
       updateIndexRoot (ecEnv ec) (ecCatalog ec) (ecTxn ec) (ixRelId ix) r
     _ -> pure ()
 
+-- | Target descriptors for the WHOLE statement, in the ExecCtx (see the
+--   ecTargets note in internal/09 §9.1's ExecCtx deviation): this realises
+--   internal/06 §6.3's "the Modify operator keeps a local IORef RelationDesc
+--   for its target table" — the descriptor a statement passes to heapInsert
+--   must ALREADY list the pages that statement has allocated, so internal/01
+--   §1.8 step 3 can append each new page to the chain from the relation's
+--   true last page (the cached descriptor is frozen until COMMIT).
+targetOf :: ExecCtx -> RelId -> IO (IORef RelationDesc)
+targetOf ec relid = do
+  m <- readIORef (ecTargets ec)
+  case M.lookup relid m of
+    Just cell -> pure cell
+    Nothing -> do
+      rd <- lookupDesc ec relid
+      cell <- newIORef rd
+      modifyIORef' (ecTargets ec) (M.insert relid cell)
+      pure cell
+
 runInsert :: ExecCtx -> RelId -> [Int] -> [[Value]] -> IO Int64
 runInsert ec relid ords vals = do
-  rd <- lookupDesc ec relid
+  cell <- targetOf ec relid
   (ixs, roots) <- newRoots ec relid
   cnt <- newIORef (0 :: Int64)
   forM_ vals $ \vs -> do
+    rd <- readIORef cell
     let tup = assignTuple (rdColumns rd) ords vs
-    rid <- heapInsert (ecEnv ec) (ecTxn ec) rd tup
+    (rid, rd') <- heapInsertDesc (ecEnv ec) (ecTxn ec) rd tup
+    writeIORef cell rd'
     modifyIORef' cnt (+ 1)
     forM_ ixs $ \ix -> do
       r0 <- rootOf roots ix
@@ -705,9 +730,10 @@ runInsert ec relid ords vals = do
                           (tup !! ixColumn ix) rid
       modifyIORef' roots (M.insert (ixRelId ix) newr)
   n <- readIORef cnt
+  rdCat <- lookupDesc ec relid
   when (n > 0) $ do
     stageTupleDelta (ecCatalog ec) (ecTxn ec) relid n
-    stageNewHeapPages ec relid (rdPages rd)
+    stageNewHeapPages ec relid (rdPages rdCat)
     syncIndexRoots ec ixs roots
   pure n
 
