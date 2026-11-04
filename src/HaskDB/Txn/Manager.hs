@@ -16,6 +16,7 @@
 module HaskDB.Txn.Manager where
 
 import qualified Data.Map.Strict as Map
+import Control.Monad (forM)
 import Control.Monad.STM (atomically)
 import GHC.Internal.Conc.Sync (TVar, newTVarIO, readTVar, writeTVar, readTVarIO, newTVar)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
@@ -23,7 +24,8 @@ import Control.Exception (try, throwIO, SomeException, fromException)
 import HaskDB.Common.Types (TxnId, LSN, RID, RelId)
 import Data.Text (pack)
 import HaskDB.Common.Error (SqlError(..), errInternal)
-import HaskDB.Server.Env (Env(envWalMgr))
+import HaskDB.Server.Env (Env(envWalMgr, envCkptLock))
+import Control.Concurrent.MVar (MVar, withMVar)
 import HaskDB.Wal.Manager (WalManager, appendRecord, flushWalUpTo, readRecordAt)
 import HaskDB.Wal.Format (WalPayload(..), walRecord)
 import HaskDB.Wal.Apply (applyUndo)
@@ -69,11 +71,41 @@ newTxnManager tid0 = do
   a <- newTVarIO Map.empty
   pure TxnManager { tmNextTid = n, tmActive = a }
 
--- | beginTxn flow (internal/04 §4.2): allocate id, register as active.
+-- | internal/03 §3.5 step 1: snapshot the ACTIVE transactions as
+--   @[(txnId, oldestUndoLSN)]@ for the checkpoint core, so recovery's phase C
+--   can undo the pages they still own.  Passing @[]@ here (as an earlier
+--   draft of the server did) breaks the crash-equivalence invariant, because
+--   'flushAll' can push a partially-applied transaction below the new redo
+--   boundary while nothing records it as active.  internal/03 §3.5 step 5 also
+--   wants the control file's nextTid from the manager, not from the stale
+--   control TVar that sessions never bump.
+activeSnapshot :: TxnManager -> IO [(TxnId, LSN)]
+activeSnapshot tm = do
+  act <- readTVarIO (tmActive tm)
+  forM [ (tid, ai) | (tid, ai) <- Map.toList act, aiStatus ai == TxnActive ] $ \(tid, ai) -> do
+    l <- readIORef (aiOldest ai)
+    pure (tid, l)
+
+-- | The transaction manager owns the id counter (phase-3 decision); the
+--   checkpoint must persist THAT value.
+nextTidOf :: TxnManager -> IO TxnId
+nextTidOf tm = readTVarIO (tmNextTid tm)
+
+-- | beginTxn flow (internal/04 §4.2): allocate id, register as active.  The
+--   registration runs UNDER the checkpoint's serialising lock (envCkptLock,
+--   held from internal/03 §3.5 across the active-set snapshot and the CHECKPOINT
+--   record append): a transaction that registered DURING a checkpoint would
+--   otherwise slip in below the redo boundary the checkpoint is about to fix,
+--   append its first record there, and be missing from the checkpoint table —
+--   after which flushAll's dirty pages would make an UNCOMMITTED transaction's
+--   changes survive recovery (design/02 §2.6 + internal/03 §3.5's crash-
+--   equivalence rule).  The block below is pure STM, so it nests no other lock
+--   and cannot create a cycle; the price is that a running checkpoint delays the
+--   start of a new transaction by its flush+fsync window.
 beginTxn :: TxnManager -> LockManager -> Env -> IO TxnCtx
 beginTxn tm lm env = do
   ref0 <- newIORef 0        -- IORef created outside STM (per-txn oldest LSN)
-  (tid, ai) <- atomically $ do
+  (tid, ai) <- withMVar (envCkptLock env) $ \_ -> atomically $ do
     tid <- readTVar (tmNextTid tm)
     writeTVar (tmNextTid tm) (tid + 1)
     fl <- newTVar Nothing

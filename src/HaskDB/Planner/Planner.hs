@@ -616,6 +616,23 @@ planStatement cache a = do
     ADelete rid wp      -> planDelete cache cnt rid wp
     ACreateTable cs     -> pure (mkPlan (PCreateTable cs) 0.0 0)
     ACreateIndex ci     -> pure (mkPlan (PCreateIndex ci) 0.0 0)
+    ACopy rid wantIn    -> do
+      mrd <- lookupById cache rid
+      case mrd of
+        Nothing -> throwSqlOf (errInternal
+          "planner: COPY relation is not in the catalog")
+        Just rd -> let ords = [0 .. length (rdColumns rd) - 1]
+                   in if wantIn
+                    -- COPY IN: the row stream comes from the wire, which a
+                    -- pure Plan cannot carry; the session layer feeds it to
+                    -- 'runInsert' in chunks (T43 deviation).  The empty-rows
+                    -- plan exists so the pipeline stays uniform.
+                      then pure (mkPlan (PInsert rid ords []) 0.0 0)
+                    -- COPY OUT: a plain whole-relation scan; the session
+                    -- installs a COPY-text sink.
+                      else pure (mkPlan (PSeqScan rid)
+                               (fromIntegral (rdTuples rd) * cpuOperatorCost)
+                               (rdTuples rd))
     ATxnControl _       -> throwSqlOf (errInternal
       "planner: transaction control statements are handled by the session layer")
 

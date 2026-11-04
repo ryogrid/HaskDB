@@ -5,3 +5,13 @@ dist-newstyle/
 *.event
 haskdb.lock
 *.tmp
+
+# test scratch directories (runtime artifacts of the test suites)
+session-test-dir/
+exec-test-dir/
+index-test-dir/
+txn-test-dir/
+probe-dir/
+# editor / harness artifacts, not project content
+.serena/
+opencode.json

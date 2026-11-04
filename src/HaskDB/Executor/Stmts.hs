@@ -15,7 +15,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.Int (Int64)
 import Data.Text (Text)
-import Data.IORef (IORef, readIORef)
+import Data.IORef (IORef, newIORef, readIORef)
 
 import HaskDB.Common.Types (Value)
 import HaskDB.Common.Error (errScalarSubqRows)
@@ -49,8 +49,9 @@ stmtTag n = case n of
 newExecCtx :: Env -> CatalogCache -> TxnCtx -> IO ExecCtx
 newExecCtx env cache ctx = do
   mem <- newMemBudget (envConfig env)
+  rts <- newIORef M.empty
   pure ExecCtx { ecEnv = env, ecTxn = ctx, ecCatalog = cache
-               , ecSubq = M.empty, ecMem = mem }
+               , ecSubq = M.empty, ecMem = mem, ecRoots = rts }
 
 -- | Preamble: execute every subquery of the plan (bottom-up) and remember
 --   its result.  Scalar subqueries are limited to one row here; zero rows

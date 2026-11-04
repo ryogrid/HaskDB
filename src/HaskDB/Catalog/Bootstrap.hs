@@ -17,20 +17,21 @@
 --     (INSERT_TUPLE records), so an aborted DDL undoes its catalog rows.
 module HaskDB.Catalog.Bootstrap where
 
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.IO (openFile, hClose, IOMode(ReadMode))
 import System.FilePath ((</>))
 import Control.Monad (forM_, when)
 import qualified Data.ByteString as BS
 import Data.List (sortBy)
 import Data.IORef (newIORef, readIORef)
-import Data.Text (Text)
+import Data.Text (Text, pack)
 import Data.Word
 import HaskDB.Common.Types (PageId, RelId, RID(..), Value, compareSql)
 import HaskDB.Common.Config (Config, cfgDataDir, cfgPageSize, cfgBufferFrames)
 import HaskDB.Common.Error (throwSql)
 import HaskDB.Server.Env (Env, envBufferPool, envConfig, envControl, envFileMgr, envFreeSpace, newEnv)
 import HaskDB.Server.Control (ControlFile(..), writeControl)
-import HaskDB.Storage.FileManager (openDataFile, extendFile, writePageBytes)
+import HaskDB.Storage.FileManager (openDataFile, extendFile, writePageBytes, readPageBytes)
 import HaskDB.Storage.BufferPool (newBufferPool, withPageDirty, pinNewPage, unpinPage, ppPage)
 import GHC.Internal.Conc.Sync (readTVarIO)
 import HaskDB.Wal.Manager (newWalManager, flushWalUpTo)
@@ -45,11 +46,11 @@ import HaskDB.Heap.Heap (heapInsert, heapUpdate, heapScan)
 import HaskDB.Heap.TupleCodec (ColumnDesc(..), encodeTuple)
 import HaskDB.Storage.Page (PageRef(..), PageKind(PKCatalog, PKHeap), initPage,
   pageSplice, pageSlice, installPageImage, buildSlottedImage, readHeader,
-  PageHeader, pageFreeContiguous)
+  pageFreeContiguous)
 import HaskDB.Storage.FreeSpace (fsmNoteFree)
-import HaskDB.Common.Codec (runDecode, getW64le, putW32le, putW64le, buildToBytes)
+import HaskDB.Common.Codec (runDecode, getW64le, getW32le, putW32le, putW64le, buildToBytes)
 import HaskDB.Txn.Manager (TxnCtx, txnAppend, lockTable)
-import HaskDB.Txn.LockManager (LockMode(LIx, LX))
+import HaskDB.Txn.LockManager (LockMode(LX))
 import HaskDB.Index.BTree (btreeBuild)
 
 -- ---------------------------------------------------------------------------
@@ -137,7 +138,53 @@ createDatabase cfg cache = do
 bootstrapCheckpoint :: Env -> IO ()
 bootstrapCheckpoint env = do
   ctl <- readTVarIO (envControl env)
-  runCheckpointWith env [] (cfNextTid ctl)
+  -- nothing can be active at bootstrap, so the §3.5 step-1 snapshot is empty
+  -- and the control file's nextTid is the one nothing has bumped.
+  runCheckpointWith env (pure ([], cfNextTid ctl))
+
+-- | internal/11 §11.2/§11.4: page 0 echoes the page size (internal/06
+--   §6.2's file-header listing) and that echo must be cross-checked AT OPEN
+--   against the control file, else two databases written with different page
+--   sizes are silently mixed.  The docs attribute the check to @readControl@,
+--   whose signature cannot see the data file, so it lives here; it takes the
+--   @Config@ + the just-parsed @ControlFile@ and reads the RAW file, because
+--   §11.2's ordering puts the check BEFORE any replay (a mismatched replay
+--   would already have written wrongly-aligned page images) and the FileManager
+--   handle only exists after recovery (logged deviation).
+checkPage0 :: Config -> ControlFile -> IO ()
+checkPage0 cfg ctl
+  | cfPageSize ctl /= cfgPageSize cfg =
+      throwSql "XX000"
+        ("open: the control file's pageSize " <> pack (show (cfPageSize ctl))
+        <> " disagrees with the configuration's "
+        <> pack (show (cfgPageSize cfg)))
+  | otherwise = do
+      let ps = cfPageSize ctl
+          path = cfgDataDir cfg </> dataFileName
+      exists <- doesFileExist path
+      if not exists
+        then pure ()        -- no data file yet: nothing to cross-check
+        else do
+          h <- openFile path ReadMode
+          bs <- BS.hGet h ps                      -- page 0 sits at offset 0
+          hClose h
+          if BS.length bs < ps
+            then throwSql "XX000"
+              "open: the data file is shorter than one page (pageSize mismatch?)"
+            else if BS.take 4 (BS.drop page0PayloadOff bs) /= page0Magic
+              then throwSql "XX000"
+                "open: page 0 is not a bootstrapped HaskDB page-0 (magic missing)"
+              else case runDecode getW32le
+                     (BS.take 4 (BS.drop (page0PayloadOff + 8) bs)) of
+                Left e -> throwSql "XX000"
+                  ("open: page 0's file header is unreadable: " <> e)
+                Right w
+                  | w /= (fromIntegral ps :: Word32) ->
+                      throwSql "XX000"
+                        ("open: page 0's pageSize " <> pack (show w)
+                        <> " disagrees with the control file's "
+                        <> pack (show ps))
+                  | otherwise -> pure ()
 
 -- | Allocate the next relation id: page-0 counter bump logged with the
 --   before/after images of page 0 (undo restores the counter on abort; a

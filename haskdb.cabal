@@ -3,8 +3,11 @@ name:           haskdb
 version:        0.1.0
 license:        NONE
 author:         HaskDB project
--- GHC + boot libraries only in the library; see design/11 D-06 (network
--- package gets added in Phase 7 for the socket layer).
+-- GHC + boot libraries only; the Listener socket is a libc shim reached
+--   through GHC's FFI (c-sources below).  D-06 chose the `network` package,
+--   amended to D-24: network is not a boot library and cannot be built with
+--   this toolchain (its Setup needs a statically linked hsc2hs, no static
+--   gmp on this box).
 -- Build: cabal build ; language GHC2021 per internal-design/00 §0.7.
 -- libgmp-dev is absent on this box: a libgmp.so symlink sits in the
 -- ghcup toolchain lib dir so -lgmp resolves at link time.
@@ -12,7 +15,9 @@ author:         HaskDB project
 library
     default-language:  GHC2021
     default-extensions: OverloadedStrings
-    build-depends:    base, bytestring, containers, binary, array, text, mtl, stm, ghc-internal, unix, directory, filepath
+    other-extensions:   ForeignFunctionInterface
+    c-sources:          c/hs-socket.c
+    build-depends:    base, bytestring, containers, binary, array, text, mtl, stm, ghc-internal, unix, directory, filepath, time
     hs-source-dirs:   src
     exposed-modules:  HaskDB.Common.Types
                     , HaskDB.Common.Error
@@ -48,7 +53,22 @@ library
                     , HaskDB.Executor.Stmts
                     , HaskDB.Planner.Planner
                     , HaskDB.Planner.CostModel
+                    , HaskDB.Server.Wire
+                    , HaskDB.Server.Session
+                    , HaskDB.Server.Socket
+                    , HaskDB.Server.Listener
     ghc-options:      -Wall -optl-L/home/ryo/.local/lib
+
+-- | haskdb-server (§11.1): the server executable.
+executable haskdb-server
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+    main-is:            Main.hs
+    build-depends:      base, bytestring, text, containers, unix, directory,
+                          filepath, time, haskdb
+    hs-source-dirs:     app
+    ghc-options:        -Wall -rtsopts -threaded
+                          -with-rtsopts=-N2 -optl-L/home/ryo/.local/lib
 
 test-suite codec-tests
     type:               exitcode-stdio-1.0
@@ -101,6 +121,16 @@ test-suite sql-tests
     default-extensions: OverloadedStrings
     main-is:            SqlSpec.hs
     build-depends:      base, bytestring, containers, binary, array, text, mtl, unix, directory, filepath, haskdb
+    hs-source-dirs:     test
+    ghc-options:        -Wall -optl-L/home/ryo/.local/lib
+
+test-suite session-tests
+    type:               exitcode-stdio-1.0
+    default-language:   GHC2021
+    default-extensions: OverloadedStrings
+    main-is:            SessionSpec.hs
+    build-depends:      base, bytestring, containers, binary, array, text, mtl,
+                          stm, ghc-internal, unix, directory, filepath, time, haskdb
     hs-source-dirs:     test
     ghc-options:        -Wall -optl-L/home/ryo/.local/lib
 

@@ -70,6 +70,7 @@ data Analyzed
   | ADelete RelId (Maybe RPred)
   | ACreateTable CreateTableStmt
   | ACreateIndex CreateIndexStmt
+  | ACopy RelId Bool            -- extension: rel + 'from stdin' flag
   | ATxnControl Statement
   deriving (Show)
 
@@ -355,6 +356,16 @@ analyzeInsert cache (InsertStmt nm mcols rows) = do
           rows' <- mapM (zipWithM coerceLit [ colType (cols !! j) | j <- ords ]) rows
           pure (AInsert (rdId d) ords rows')
 
+-- ---------------- COPY (extension: bulk loading, memo §5) ---------------
+analyzeCopy :: CatalogCache -> CopyStmt -> IO Analyzed
+analyzeCopy cache (CopyStmt nm wantIn) = do
+  mrd <- lookupByName cache nm
+  case mrd of
+    Nothing -> throwSqlOf (errNoRel nm)
+    Just d
+      | rdKind d /= RelTable -> throwSqlOf (errNoRel nm)
+      | otherwise -> pure (ACopy (rdId d) wantIn)
+
 -- ---------------- UPDATE / DELETE: one-slot scope (§7.5) ---------------
 analyzeUpdate :: CatalogCache -> UpdateStmt -> IO Analyzed
 analyzeUpdate cache (UpdateStmt nm asgn mwp) = do
@@ -436,6 +447,7 @@ analyze cache st = case st of
   StmtDelete s      -> analyzeDelete cache s
   StmtCreateTable s -> analyzeCreateTable cache s
   StmtCreateIndex s -> analyzeCreateIndex cache s
+  StmtCopy s        -> analyzeCopy cache s
   _                 -> pure (ATxnControl st)
 
 -- ---------------- helpers shared by analyzeSelect ----------------

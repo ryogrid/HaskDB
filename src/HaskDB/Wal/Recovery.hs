@@ -99,13 +99,20 @@ fixLast wb _cp t info
                           , wrTxn r == t ]) }
   | otherwise = info
 
--- | §3.5 checkpoint with explicit active-txn snapshot and nextTid
---   (deviation: docs take only Env — our Env does not carry the Txn
---   Manager, so the checkpoint core receives (activeTxnsOldestLSN, nextTid)
---   from its caller; the server/checkpoint-timer thread will call this
---   with the live TxnManager's data in Phase 7).
-runCheckpointWith :: Env -> [(TxnId, LSN)] -> TxnId -> IO ()
-runCheckpointWith env act tid = withMVar (envCkptLock env) $ \_ -> do
+-- | §3.5 checkpoint core.  The ACTIVE-TXN SNAPSHOT and nextTid come from an
+--   action that is RUN INSIDE the checkpoint's lock, not captured by the caller
+--   before it: capturing early leaves a window where a transaction registers
+--   and appends its first record BELOW the new redo boundary while absent from
+--   the checkpoint table, and a later flushAll would then let an uncommitted
+--   transaction's pages survive recovery (design/02 §2.6 + internal/03 §3.5's
+--   crash-equivalence rule).  Paired with beginTxn, which takes the SAME lock
+--   for its registration step, no transaction can slip into that window.
+--   (deviation: §3.5's core takes only Env and reads the managers itself; the
+--   layering rule internal/00 §0.6 puts Storage/Wal below Txn, so the caller
+--   supplies the READER instead of the value.)
+runCheckpointWith :: Env -> IO ([(TxnId, LSN)], TxnId) -> IO ()
+runCheckpointWith env snap = withMVar (envCkptLock env) $ \_ -> do
+  (act, tid) <- snap
   let wal = envWalMgr env
   lsn <- appendRecord wal WalRecord
     { wrType = WTCheckpoint, wrTxn = 0, wrPrevTxn = 0
@@ -165,7 +172,7 @@ performRecovery env ctl = do
   -- nextTid must not reuse ids seen in the WAL (aborted txns consumed
   -- ids past the checkpoint): bump past the max txn id analyzed.
   let tidNew = max (cfNextTid ctl) (1 + maximum (0 : Map.keys tbl))
-  runCheckpointWith env [] tidNew
+  runCheckpointWith env (pure ([], tidNew))
 
 undoLoser :: Env -> BS.ByteString -> (TxnId, TxnRecoveryInfo) -> IO ()
 undoLoser env wb (_, info)

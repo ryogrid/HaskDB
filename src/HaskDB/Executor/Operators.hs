@@ -668,11 +668,19 @@ rootOf refs ix = do
   m <- readIORef refs
   pure (M.findWithDefault (ixRoot ix) (ixRelId ix) m)
 
+-- | Index roots for the WHOLE statement, kept in the ExecCtx (see the
+--   ecRoots deviation note): seeding them fresh from the catalog on every
+--   call made a later COPY IN chunk descend the pre-split root, because the
+--   staged root only lands at COMMIT.
 newRoots :: ExecCtx -> RelId -> IO ([IndexDesc], IORef (Map RelId PageId))
 newRoots ec relid = do
   ixs <- indexesOf (ecCatalog ec) relid
-  refs <- newIORef (M.fromList [ (ixRelId i, ixRoot i) | i <- ixs ])
-  pure (ixs, refs)
+  let shared = ecRoots ec
+  modifyIORef' shared $ \m ->
+    foldl (\acc i -> if M.member (ixRelId i) acc
+                       then acc
+                       else M.insert (ixRelId i) (ixRoot i) acc) m ixs
+  pure (ixs, shared)
 
 syncIndexRoots :: ExecCtx -> [IndexDesc] -> IORef (Map RelId PageId) -> IO ()
 syncIndexRoots ec ixs refs = forM_ ixs $ \ix -> do

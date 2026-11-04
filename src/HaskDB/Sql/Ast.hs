@@ -12,8 +12,19 @@ data Statement
   | StmtDelete   DeleteStmt
   | StmtCreateTable CreateTableStmt
   | StmtCreateIndex CreateIndexStmt
+  | StmtCopy        CopyStmt
   | StmtBegin | StmtCommit | StmtRollback
   deriving (Show)
+
+-- | COPY is an EXTENSION of the dialect (design/05 §5.2 has no COPY; the
+--   PostgreSQL COPY command is needed for pgbench-style bulk loading —
+--   see notes/wire-protocol-psql-pgbench-memo.md §5).  Full column list is
+--   the only form: this dialect has no NULL/defaults, so a partial list
+--   would be the 0A000 partial-INSERT rule anyway.
+data CopyStmt = CopyStmt
+  { cpTable     :: Text
+  , cpFromStdin :: Bool      -- True = 'from stdin' (load), False = 'to stdout'
+  } deriving (Show)
 
 data SelectStmt = SelectStmt
   { selList     :: [SelectItem]

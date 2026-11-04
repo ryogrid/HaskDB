@@ -1,0 +1,7 @@
+-- Phase 7 (D-24, amends D-06): the Listener socket is the libc shim in
+-- c/hs-socket.c reached through GHC's FFI, not the `network` package: that
+-- package is not a GHC boot library and cannot be built here (its Setup needs
+-- a statically linked hsc2hs, and this box has no static gmp).  Socket
+-- symbols come from the C object compiled with the package, so nothing extra
+-- is needed in this project file.
+packages: haskdb.cabal

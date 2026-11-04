@@ -150,10 +150,16 @@ data SubqueryResult
   = SQScalar (Maybe Value) | SQSet [Value] | SQExists Bool
   deriving (Show)
 
+-- ecRoots is a deviation: the index roots are carried for the WHOLE statement.
+--   A COPY IN calls runInsert once per CopyData chunk, and seeding the roots
+--   from the catalog each time made a later chunk descend the pre-split root
+--   (the staged root only lands in the catalog at COMMIT), which left the
+--   rows inserted after a split unreachable through the index.
 data ExecCtx = ExecCtx { ecEnv :: Env, ecTxn :: TxnCtx
                        , ecCatalog :: CatalogCache
                        , ecSubq :: Map SubqueryId SubqueryResult
-                       , ecMem :: MemBudget }
+                       , ecMem :: MemBudget
+                       , ecRoots :: IORef (Map RelId PageId) }
 -- deviation: ecCatalog added (btreeSearch / index maintenance / relation
 --   descs need the catalog handle inside operators; docs pass only Env).
 

@@ -122,6 +122,7 @@ pStatement ts = case peekT ts of
       TIdent "table" -> pCreateTable ts2 >>= \(s, r) -> Right (StmtCreateTable s, r)
       TIdent "index" -> pCreateIndex ts2 >>= \(s, r) -> Right (StmtCreateIndex s, r)
       _              -> Left (errSyntax "expected TABLE or INDEX after CREATE")
+  TIdent "copy"  -> pCopyStmt ts >>= \(s, r) -> Right (StmtCopy s, r)
   TIdent "begin"     -> Right (StmtBegin, drop1 ts)
   TIdent "commit"    -> Right (StmtCommit, drop1 ts)
   TIdent "rollback"  -> Right (StmtRollback, drop1 ts)
@@ -514,26 +515,47 @@ pCreateIndex ts = do
   (col, ts6) <- pIdent ts5
   ts7 <- eatSym ')' ts6
   Right (CreateIndexStmt nm tbl col, ts7)
+-- ---------------- copy_stmt (dialect extension: pgbench bulk loading) -----
+--   copy <table> from stdin [with ( <arbitrary> )]
+--   copy <table> to stdout  [with ( <arbitrary> )]
+-- The WITH-options are parsed and IGNORED: HaskDB has no lock-free load
+-- mode, and pgbench 18.3 emits "with (freeze on)" on v14+ style servers
+-- (memo §4).  Parenthesised option text is consumed as raw tokens, so no
+-- option vocabulary is invented.
+pCopyStmt :: [Tok] -> Either SqlError (CopyStmt, [Tok])
+pCopyStmt ts = do
+  ts1 <- eatK "copy" ts
+  (nm, ts2) <- pIdent ts1
+  (wantIn, ts3) <- copyDir ts2
+  ts4 <- eatK (if wantIn then "stdin" else "stdout") ts3
+  opts <- skipWithOpts ts4
+  Right (CopyStmt nm wantIn, opts)
 
+-- | The direction phrase of the COPY extension.
+copyDir :: [Tok] -> Either SqlError (Bool, [Tok])
+copyDir ts = case ts of
+  (Tok _ (TIdent "from") : rest) -> Right (True, rest)
+  (Tok _ (TIdent "to") : rest)   -> Right (False, rest)
+  _ -> Left (errSyntax "copy: expected `from stdin' or `to stdout'")
 
+-- | Swallow an optional @with ( ... )@ tail; parens must balance.
+skipWithOpts :: [Tok] -> Either SqlError [Tok]
+skipWithOpts ts = case peekT ts of
+  TIdent "with" -> case ts of
+    (_ : ts1) -> case peekT ts1 of
+      TSymbol '(' -> eatSym '(' ts1 >>= skipBalanced (0 :: Int)
+      _         -> Left (errSyntax "copy: expected `(' after `with'")
+    [] -> Left (errSyntax "copy: truncated `with'")
+  _ -> Right ts
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+skipBalanced :: Int -> [Tok] -> Either SqlError [Tok]
+skipBalanced d ts0 = loop d ts0
+  where
+    loop depth ts = case ts of
+      [] | depth == 0    -> Right []
+         | otherwise     -> Left (errSyntax "copy: unbalanced `with (' options")
+      (t : rest) -> case tokVal t of
+        TSymbol '(' -> loop (depth + 1) rest
+        TSymbol ')' | depth == 0    -> Right rest
+                    | otherwise     -> loop (depth - 1) rest
+        _ -> loop depth rest
