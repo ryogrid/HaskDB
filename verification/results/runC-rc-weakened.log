@@ -1,0 +1,177 @@
+=== runC-rc-weakened : HaskDBRC -config HaskDBRC.cfg (2026-11-17T03:54:13+00:00) ===
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 91 and seed -4282438715516604453 with 4 workers on 4 cores with 2731MB heap and 64MB offheap memory [pid: 8634] (Linux 7.0.0-44-generic amd64, Eclipse Adoptium 17.0.21 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/hatch/workspace/HaskDB-tla/verification/spec/HaskDBRC.tla
+Parsing file /tmp/Naturals.tla
+Parsing file /tmp/FiniteSets.tla
+Parsing file /tmp/TLC.tla
+Parsing file /tmp/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module HaskDBRC
+Starting... (2026-11-17 03:54:14)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-17 03:54:14.
+Error: Invariant NoNonRepeatableRead is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ badNRR = FALSE
+/\ locksS = (k1 :> {} @@ k2 :> {} @@ k3 :> {})
+/\ locksX = (k1 :> notxn @@ k2 :> notxn @@ k3 :> notxn)
+/\ committedVals = (k1 :> {v0} @@ k2 :> {v0} @@ k3 :> {nv})
+/\ cOrd = (t1 :> 0 @@ t2 :> 0)
+/\ db = (k1 :> v0 @@ k2 :> v0 @@ k3 :> nv)
+/\ firstScan = (t1 :> {} @@ t2 :> {})
+/\ commitCnt = 0
+/\ scanSeen = (t1 :> FALSE @@ t2 :> FALSE)
+/\ phantom = FALSE
+/\ lastWSeq = (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0)
+/\ cWrites = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ firstExtRead = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ wbuf = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ status = (t1 :> "idle" @@ t2 :> "idle")
+/\ badLU = FALSE
+/\ readSeq = (t1 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0) @@ t2 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0))
+
+State 2: <Begin line 129, col 3 to line 133, col 51 of module HaskDBRC>
+/\ badNRR = FALSE
+/\ locksS = (k1 :> {} @@ k2 :> {} @@ k3 :> {})
+/\ locksX = (k1 :> notxn @@ k2 :> notxn @@ k3 :> notxn)
+/\ committedVals = (k1 :> {v0} @@ k2 :> {v0} @@ k3 :> {nv})
+/\ cOrd = (t1 :> 0 @@ t2 :> 0)
+/\ db = (k1 :> v0 @@ k2 :> v0 @@ k3 :> nv)
+/\ firstScan = (t1 :> {} @@ t2 :> {})
+/\ commitCnt = 0
+/\ scanSeen = (t1 :> FALSE @@ t2 :> FALSE)
+/\ phantom = FALSE
+/\ lastWSeq = (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0)
+/\ cWrites = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ firstExtRead = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ wbuf = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ status = (t1 :> "active" @@ t2 :> "idle")
+/\ badLU = FALSE
+/\ readSeq = (t1 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0) @@ t2 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0))
+
+State 3: <Read line 144, col 3 to line 163, col 24 of module HaskDBRC>
+/\ badNRR = FALSE
+/\ locksS = (k1 :> {} @@ k2 :> {} @@ k3 :> {})
+/\ locksX = (k1 :> notxn @@ k2 :> notxn @@ k3 :> notxn)
+/\ committedVals = (k1 :> {v0} @@ k2 :> {v0} @@ k3 :> {nv})
+/\ cOrd = (t1 :> 0 @@ t2 :> 0)
+/\ db = (k1 :> v0 @@ k2 :> v0 @@ k3 :> nv)
+/\ firstScan = (t1 :> {} @@ t2 :> {})
+/\ commitCnt = 0
+/\ scanSeen = (t1 :> FALSE @@ t2 :> FALSE)
+/\ phantom = FALSE
+/\ lastWSeq = (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0)
+/\ cWrites = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ firstExtRead = ( t1 :> (k1 :> v0 @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ wbuf = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ status = (t1 :> "active" @@ t2 :> "idle")
+/\ badLU = FALSE
+/\ readSeq = (t1 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0) @@ t2 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0))
+
+State 4: <Begin line 129, col 3 to line 133, col 51 of module HaskDBRC>
+/\ badNRR = FALSE
+/\ locksS = (k1 :> {} @@ k2 :> {} @@ k3 :> {})
+/\ locksX = (k1 :> notxn @@ k2 :> notxn @@ k3 :> notxn)
+/\ committedVals = (k1 :> {v0} @@ k2 :> {v0} @@ k3 :> {nv})
+/\ cOrd = (t1 :> 0 @@ t2 :> 0)
+/\ db = (k1 :> v0 @@ k2 :> v0 @@ k3 :> nv)
+/\ firstScan = (t1 :> {} @@ t2 :> {})
+/\ commitCnt = 0
+/\ scanSeen = (t1 :> FALSE @@ t2 :> FALSE)
+/\ phantom = FALSE
+/\ lastWSeq = (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0)
+/\ cWrites = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ firstExtRead = ( t1 :> (k1 :> v0 @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ wbuf = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ status = (t1 :> "active" @@ t2 :> "active")
+/\ badLU = FALSE
+/\ readSeq = (t1 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0) @@ t2 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0))
+
+State 5: <Delete line 229, col 3 to line 239, col 44 of module HaskDBRC>
+/\ badNRR = FALSE
+/\ locksS = (k1 :> {} @@ k2 :> {} @@ k3 :> {})
+/\ locksX = (k1 :> t2 @@ k2 :> notxn @@ k3 :> notxn)
+/\ committedVals = (k1 :> {v0} @@ k2 :> {v0} @@ k3 :> {nv})
+/\ cOrd = (t1 :> 0 @@ t2 :> 0)
+/\ db = (k1 :> v0 @@ k2 :> v0 @@ k3 :> nv)
+/\ firstScan = (t1 :> {} @@ t2 :> {})
+/\ commitCnt = 0
+/\ scanSeen = (t1 :> FALSE @@ t2 :> FALSE)
+/\ phantom = FALSE
+/\ lastWSeq = (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0)
+/\ cWrites = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ firstExtRead = ( t1 :> (k1 :> v0 @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ wbuf = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> nv @@ k2 :> none @@ k3 :> none) )
+/\ status = (t1 :> "active" @@ t2 :> "active")
+/\ badLU = FALSE
+/\ readSeq = (t1 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0) @@ t2 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0))
+
+State 6: <Commit line 246, col 3 to line 261, col 41 of module HaskDBRC>
+/\ badNRR = FALSE
+/\ locksS = (k1 :> {} @@ k2 :> {} @@ k3 :> {})
+/\ locksX = (k1 :> notxn @@ k2 :> notxn @@ k3 :> notxn)
+/\ committedVals = (k1 :> {v0, nv} @@ k2 :> {v0} @@ k3 :> {nv})
+/\ cOrd = (t1 :> 0 @@ t2 :> 1)
+/\ db = (k1 :> nv @@ k2 :> v0 @@ k3 :> nv)
+/\ firstScan = (t1 :> {} @@ t2 :> {})
+/\ commitCnt = 1
+/\ scanSeen = (t1 :> FALSE @@ t2 :> FALSE)
+/\ phantom = FALSE
+/\ lastWSeq = (k1 :> 1 @@ k2 :> 0 @@ k3 :> 0)
+/\ cWrites = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> nv @@ k2 :> none @@ k3 :> none) )
+/\ firstExtRead = ( t1 :> (k1 :> v0 @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ wbuf = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> nv @@ k2 :> none @@ k3 :> none) )
+/\ status = (t1 :> "active" @@ t2 :> "committed")
+/\ badLU = FALSE
+/\ readSeq = (t1 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0) @@ t2 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0))
+
+State 7: <Read line 144, col 3 to line 163, col 24 of module HaskDBRC>
+/\ badNRR = TRUE
+/\ locksS = (k1 :> {} @@ k2 :> {} @@ k3 :> {})
+/\ locksX = (k1 :> notxn @@ k2 :> notxn @@ k3 :> notxn)
+/\ committedVals = (k1 :> {v0, nv} @@ k2 :> {v0} @@ k3 :> {nv})
+/\ cOrd = (t1 :> 0 @@ t2 :> 1)
+/\ db = (k1 :> nv @@ k2 :> v0 @@ k3 :> nv)
+/\ firstScan = (t1 :> {} @@ t2 :> {})
+/\ commitCnt = 1
+/\ scanSeen = (t1 :> FALSE @@ t2 :> FALSE)
+/\ phantom = FALSE
+/\ lastWSeq = (k1 :> 1 @@ k2 :> 0 @@ k3 :> 0)
+/\ cWrites = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> nv @@ k2 :> none @@ k3 :> none) )
+/\ firstExtRead = ( t1 :> (k1 :> v0 @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> none @@ k2 :> none @@ k3 :> none) )
+/\ wbuf = ( t1 :> (k1 :> none @@ k2 :> none @@ k3 :> none) @@
+  t2 :> (k1 :> nv @@ k2 :> none @@ k3 :> none) )
+/\ status = (t1 :> "active" @@ t2 :> "committed")
+/\ badLU = FALSE
+/\ readSeq = (t1 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0) @@ t2 :> (k1 :> 0 @@ k2 :> 0 @@ k3 :> 0))
+
+22833 states generated, 8998 distinct states found, 6932 states left on queue.
+The depth of the complete state graph search is 8.
+The average outdegree of the complete state graph is 4 (minimum is 0, the maximum 18 and the 95th percentile is 12).
+Finished in 02s at (2026-11-17 03:54:16)
+--- exit: 12 ---

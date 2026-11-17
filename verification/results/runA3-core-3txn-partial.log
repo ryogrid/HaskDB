@@ -1,0 +1,26 @@
+=== runA3-core-3txn-partial : HaskDB -config HaskDB3S.cfg (2026-11-17T03:44+00:00) ===
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 32 and seed 885308922097679000 with 4 workers on 4 cores with 2731MB heap and 64MB offheap memory [pid: 7384] (Linux 7.0.0-44-generic amd64, Eclipse Adoptium 17.0.21 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/hatch/workspace/HaskDB-tla/run-scratch/HaskDB.tla
+Parsing file /tmp/Naturals.tla
+Parsing file /tmp/FiniteSets.tla
+Parsing file /tmp/TLC.tla
+Parsing file /tmp/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module HaskDB
+Starting... (2026-11-17 03:44:06)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-17 03:44:06.
+Progress(9) at 2026-11-17 03:44:09: 26,745 states generated (26,745 s/min), 11,183 distinct states found (11,183 ds/min), 8,156 states left on queue.
+Progress(13) at 2026-11-17 03:45:09: 4,218,356 states generated (4,191,611 s/min), 1,696,962 distinct states found (1,685,779 ds/min), 1,135,568 states left on queue.
+Progress(14) at 2026-11-17 03:46:09: 8,521,105 states generated (4,302,749 s/min), 3,459,699 distinct states found (1,762,737 ds/min), 2,273,422 states left on queue.
+Progress(14) at 2026-11-17 03:47:09: 12,991,522 states generated (4,470,417 s/min), 5,248,469 distinct states found (1,788,770 ds/min), 3,428,406 states left on queue.
+Progress(15) at 2026-11-17 03:48:09: 17,447,623 states generated (4,456,101 s/min), 7,029,839 distinct states found (1,781,370 ds/min), 4,527,795 states left on queue.
+Progress(15) at 2026-11-17 03:49:09: 21,953,492 states generated (4,505,869 s/min), 8,802,063 distinct states found (1,772,224 ds/min), 5,590,330 states left on queue.
+Progress(15) at 2026-11-17 03:50:09: 26,496,650 states generated (4,543,158 s/min), 10,484,908 distinct states found (1,682,845 ds/min), 6,534,195 states left on queue.
+Progress(15) at 2026-11-17 03:51:09: 31,005,664 states generated (4,509,014 s/min), 12,294,626 distinct states found (1,809,718 ds/min), 7,684,050 states left on queue.
+Progress(15) at 2026-11-17 03:52:09: 35,589,785 states generated (4,584,121 s/min), 14,018,230 distinct states found (1,723,604 ds/min), 8,682,742 states left on queue.
+--- stopped manually after ~9 min (14,018,230 distinct states explored up to depth 15, no invariant violation; no completion line — see report section 4) ---

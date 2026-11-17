@@ -1,0 +1,35 @@
+=== runD-deadlock-nodetector : HaskDBDeadlock -config HaskDBDeadlock.cfg (2026-11-17T03:54:06+00:00) ===
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 20 and seed 2573614105517873567 with 4 workers on 4 cores with 2731MB heap and 64MB offheap memory [pid: 8506] (Linux 7.0.0-44-generic amd64, Eclipse Adoptium 17.0.21 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/hatch/workspace/HaskDB-tla/verification/spec/HaskDBDeadlock.tla
+Parsing file /tmp/Naturals.tla
+Parsing file /tmp/TLC.tla
+Parsing file /tmp/Sequences.tla
+Parsing file /tmp/FiniteSets.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module HaskDBDeadlock
+Starting... (2026-11-17 03:54:08)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-17 03:54:08.
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ xholder = [a |-> "none", b |-> "none"]
+/\ pc = [d1 |-> 0, d2 |-> 0]
+
+State 2: <AcquireFirst line 45, col 3 to line 48, col 31 of module HaskDBDeadlock>
+/\ xholder = [a |-> "d1", b |-> "none"]
+/\ pc = [d1 |-> 1, d2 |-> 0]
+
+State 3: <AcquireFirst line 45, col 3 to line 48, col 31 of module HaskDBDeadlock>
+/\ xholder = [a |-> "d1", b |-> "d2"]
+/\ pc = [d1 |-> 1, d2 |-> 1]
+
+16 states generated, 13 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 7.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 2 and the 95th percentile is 2).
+Finished in 01s at (2026-11-17 03:54:08)
+--- exit: 11 ---
