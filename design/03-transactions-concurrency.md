@@ -6,6 +6,16 @@
 - A transaction is a sequence of statements ended by commit or rollback.
 - Statements are atomic: a failed statement leaves no partial changes
   (its changes are undone before the error is reported).
+- Statement-level rollback is one exception to the strictness rule of
+  §3.2: when a statement fails, its changes are undone *and the locks
+  it acquired are released*, while the transaction itself continues
+  (inside an explicit block the block enters the failed state,
+  02 §2.4, so nothing later in the transaction can depend on the
+  failed statement's reads). This is safe because the failed
+  statement's reads were never delivered as a successful result —
+  with one caveat: a streaming `SELECT` that fails mid-scan may
+  already have delivered some rows to the client before its locks
+  are released.
 - Outside an explicit transaction block, every statement runs in its
   own implicit transaction (autocommit). Explicit blocks are described
   in 09-wire-protocol.md §9.5. *(The requirements speak of "commit" and
@@ -29,7 +39,9 @@ stable seam.
 Under S2PL:
 
 - All locks are held until commit/rollback (strictness gives
-  cascadeless rollback with plain before-image undo).
+  cascadeless rollback with plain before-image undo) — with one
+  exception: statement-level rollback releases the failed statement's
+  locks (§3.1).
 - Reads take shared locks; writes take exclusive locks; lock upgrade
   (S → X) is allowed when the transaction is the only holder.
 
@@ -37,14 +49,21 @@ Under S2PL:
 
 | Object | Modes | Use |
 |--------|-------|-----|
-| Table (relation) | `IS`, `IX`, `S`, `X` (intention modes) | DDL takes `X` on the table; DML takes intention modes so DDL and DML exclude each other correctly |
+| Table (relation) | `IS`, `IX`, `S`, `X` (intention modes) | DDL takes `X` on the table; DML *writers* take intention modes, so DDL excludes concurrent writers. Pure `SELECT`s take no table lock at all (see §3.6) |
 | Row (RID) | `S`, `X` | tuple reads/writes |
 | Index key range | — | **not locked** (see below) |
 
-Index structures are protected only by short-term page content locks
-(02 §2.1), not by transaction locks. **Phantom anomalies are therefore
-possible under the baseline**: a repeated range scan can see rows
-inserted by a concurrently committed transaction. Preventing phantoms
+Index structures are protected by short-term page content locks
+(02 §2.1). Index *searches* take no transaction locks; index
+*maintenance* (`btreeInsert`/`btreeDelete`), however, additionally
+takes a transaction-duration `X` lock on the index relation, held
+until commit/rollback on top of the short-term latch. That lock is
+conservative — transactions maintaining the same index serialise for
+their whole duration — but readers never take it, so it does not
+change the isolation properties described below. **Phantom
+anomalies are therefore possible under the baseline**: a repeated
+range scan can see rows inserted by a concurrently committed
+transaction. Preventing phantoms
 would require predicate/key-range locking or MVCC; whether any
 isolation guarantee beyond the baseline is required is part of D-02/D-03
 (the requirements do not name an isolation level).
@@ -54,7 +73,13 @@ isolation guarantee beyond the baseline is required is part of D-02/D-03
 With strict 2PL and row locks held to end of transaction, the baseline
 provides the equivalent of **REPEATABLE READ for row accesses** (no
 dirty reads, no non-repeatable row reads, no lost updates), with
-phantoms possible as described above. A weaker/faster mode (locks
+phantoms possible as described above. REPEATABLE READ here is meant
+in the **ANSI SQL sense**: the phenomena-based definition prohibits
+dirty reads and non-repeatable reads but permits phantoms (P3). The
+strict, phantom-free reading of REPEATABLE READ is **not** claimed.
+(This matches the TLA+ verification result,
+verification/report/report.md: the row-level properties hold and a
+phantom schedule exists.) A weaker/faster mode (locks
 released after each statement for reads, i.e. READ COMMITTED style) is
 listed as an option in D-03, not implemented by default.
 
@@ -115,28 +140,44 @@ data LockEntry = LockEntry
 
 ## 3.5 Deadlocks
 
-Deadlock handling strategy is decision item **D-12** (options:
-wait-for-graph detection with victim selection, lock wait timeout,
-prevention schemes such as wait-die). Some mechanism is mandatory: with
-row locking and lock upgrades, deadlock is reachable
-(e.g. two transactions updating each other's next row).
+Deadlock handling strategy was decision item **D-12**; it is now
+**decided** (recorded here following the TLA+ verification,
+verification/report/report.md F3): **wait-for-graph cycle detection,
+aborting the youngest transaction in the cycle**, which receives
+SQLSTATE `40P01` (deadlock detected). The lock-wait-timeout option
+(`55P03`) and the prevention schemes (wait-die / wound-wait) were not
+chosen. Some mechanism is mandatory: with row locking and lock
+upgrades, deadlock is reachable (e.g. two transactions updating each
+other's next row).
 
 The design keeps the lock manager independent of the policy:
 
 - The lock manager records, for every waiting transaction, the set of
   transactions it waits for (derivable from granted holders).
-- A policy module either (a) runs periodic cycle detection and aborts
-  the youngest transaction in the cycle, or (b) aborts waiters after a
-  timeout. The aborted transaction receives SQLSTATE `40P01`
-  (deadlock) in case (a) or `55P03` (lock not available) in case (b).
+- A separate detector runs cycle detection periodically over that
+  wait-for graph. On finding a cycle it aborts the **youngest**
+  transaction in the cycle (the most recently begun one). The
+  consequence for clients: the youngest transaction is *always* the
+  victim — long-running older transactions are systematically
+  favoured — and the victim's client must be prepared to retry the
+  aborted transaction.
 
 ## 3.6 Interaction with DDL
 
 `CREATE TABLE` / `CREATE INDEX` run inside a transaction like DML
 (catalog changes are WAL-logged, 02 §2.3). They take an `X` lock on the
-(affected/new) table, which excludes concurrent DML on it for the
-duration of the statement. Because DDL is rare and the system is
-single-user, no attempt is made to allow concurrent DML during index
+(affected/new) table, which excludes concurrent DML *writers* on it
+for the duration of the statement (writers hold `IX`, which conflicts
+with `X`). Pure `SELECT`s, however, take no table-level lock at all,
+so the lock manager alone does *not* exclude readers from a table
+under DDL. Read-side exclusion instead depends on the catalog
+staging/publication mechanism: DDL changes are staged inside the
+transaction and published at commit, so readers keep working against
+the pre-DDL catalog until then. That interaction is not analysed
+further here, and DDL behaviour was not covered by the TLA+
+verification (verification/report/report.md F5). Because DDL is
+rare and the system is single-user, no attempt is made to allow
+concurrent DML during index
 builds: `CREATE INDEX` scans the table under its table lock and builds
 the index before committing.
 

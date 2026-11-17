@@ -150,6 +150,12 @@ stable references, not a sequence.)
 
 ## D-12. Deadlock handling
 
+**Status**: *Decided* — wait-for graph detection, aborting the
+youngest transaction in the cycle, SQLSTATE `40P01`, as implemented
+and as specified in 03 §3.5. (Recorded following the TLA+
+verification, verification/report/report.md F3; the option table
+below is kept for the record.)
+
 **Question**: Only relevant if D-02 = locking.
 
 | Option | Pros | Cons |
